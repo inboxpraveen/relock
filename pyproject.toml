@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "relock-memory"
+version = "0.1.0"
+description = "Agent memory that unlocks on recall, rewrites on surprise, and re-locks. Prediction-error-gated, in-place memory reconsolidation for LLM agents."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Praveen Kumar" }]
+keywords = [
+  "agents", "llm", "memory", "agent-memory", "reconsolidation",
+  "procedural-memory", "self-improving", "mcp", "langchain", "langgraph",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+# The core has no runtime dependencies: SQLite storage, BM25 retrieval and the
+# OpenAI-compatible client are all standard library.
+dependencies = []
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+mcp = ["mcp>=1.2"]
+langchain = ["langchain-core>=0.3"]
+all = ["psycopg[binary]>=3.1", "mcp>=1.2", "langchain-core>=0.3"]
+dev = ["pytest>=8", "ruff>=0.6", "psycopg[binary]>=3.1", "mcp>=1.2", "langchain-core>=0.3"]
+
+[project.scripts]
+relock = "relock_memory.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/inboxpraveen/relock"
+Repository = "https://github.com/inboxpraveen/relock"
+Issues = "https://github.com/inboxpraveen/relock/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/relock_memory"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/relock_memory", "tests", "examples", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "postgres: needs a Postgres server (set RELOCK_TEST_POSTGRES_URL)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501", "RUF012", "SIM105", "B008"]
