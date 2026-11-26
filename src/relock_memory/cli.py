@@ -158,7 +158,11 @@ def cmd_export(args: argparse.Namespace, mem: Memory) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    from .integrations.mcp import serve
+    try:
+        from .integrations.mcp import serve
+    except ImportError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     verifiers: dict[str, str] = {}
     for spec in args.verifier or ():
