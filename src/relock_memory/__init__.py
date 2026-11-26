@@ -19,6 +19,7 @@ from . import checks
 from .checks import Check
 from .delta import DeltaError, Op
 from .episode import Episode
+from .integrations.toolkit import Toolkit
 from .llm import OpenAICompatible
 from .memory import Memory
 from .policy import WritePolicy
@@ -86,6 +87,7 @@ __all__ = [
     "Signal",
     "Source",
     "ToolError",
+    "Toolkit",
     "TransientToolError",
     "Verdict",
     "WritePolicy",

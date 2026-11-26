@@ -60,7 +60,12 @@ class Signal:
     authenticated: bool = False
     principal: str | None = None
     detail_trusted: bool = True
-    """If false, ``message`` is logged but never shown to the rewriter (it may carry injected text)."""
+    """If false, ``message`` and ``correction`` are logged but never shown to the rewriter.
+
+    Use it for *trusted* sources whose text may carry outside content, e.g. a tool
+    error that echoes a remote server's response body. Untrusted sources need no
+    flag: their signals are blocked before they reach the rewriter at all.
+    """
     data: dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ constructors
@@ -160,7 +165,6 @@ class Signal:
             error_class=None if passed else ErrorClass(error_class or ErrorClass.UNKNOWN),
             message=message,
             correction=correction,
-            detail_trusted=False,
             data=dict(data),
         )
 
@@ -173,7 +177,6 @@ class Signal:
             error_class=None if passed else ErrorClass.UNKNOWN,
             message=text,
             correction=correction,
-            detail_trusted=False,
             data=dict(data),
         )
 
@@ -184,7 +187,6 @@ class Signal:
             passed=passed,
             error_class=None if passed else ErrorClass.SEMANTIC,
             message=rationale,
-            detail_trusted=False,
             data=dict(data),
         )
 

@@ -438,15 +438,17 @@ class Episode:
     def _to_evidence(e: dict[str, Any]) -> Evidence:
         d = e["diff"]
         sig = Signal.from_dict(d["signal"])
+        cls = (sig.error_class or ErrorClass.UNKNOWN).value
+        withheld = "(detail withheld: may contain untrusted content)"
         return Evidence(
             error_id=e["id"],
             expectation=d.get("expected", ""),
             clause_ids=tuple(d.get("clause_ids") or ()),
             tool=d.get("tool"),
-            observed=str(d.get("observed", "")),
+            observed=str(d.get("observed", "")) if sig.detail_trusted else f"{cls} failure {withheld}",
             source=sig.source.value,
-            error_class=(sig.error_class or ErrorClass.UNKNOWN).value,
-            message=sig.message if sig.detail_trusted else "(detail withheld: untrusted content)",
+            error_class=cls,
+            message=sig.message if sig.detail_trusted else withheld,
             correction=sig.correction if sig.detail_trusted else None,
             authoritative=bool(e["authoritative"]),
         )
