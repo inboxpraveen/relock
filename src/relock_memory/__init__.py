@@ -23,7 +23,14 @@ from .llm import OpenAICompatible
 from .memory import Memory
 from .policy import WritePolicy
 from .retrieval import BM25Retriever, EmbeddingRetriever, HybridRetriever, Retriever
-from .rewriters import CallableRewriter, HintRewriter, LLMRewriter, Proposal, RewriteRequest, Rewriter
+from .rewriters import (
+    CallableRewriter,
+    HintRewriter,
+    LLMRewriter,
+    Proposal,
+    Rewriter,
+    RewriteRequest,
+)
 from .signals import ErrorClass, Signal, Source, ToolError, TransientToolError, classify_exception
 from .stores import SQLiteStore, SQLStore, open_store
 from .types import (
