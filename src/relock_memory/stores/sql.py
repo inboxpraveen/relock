@@ -446,6 +446,19 @@ class SQLStore:
             r["created_at"] = ts(r["created_at"])
         return rows
 
+    def errors_by_ids(self, ids: Sequence[str]) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+        marks = ", ".join("?" * len(ids))
+        with self._tx() as cur:
+            self._exec(cur, f"SELECT * FROM relock_errors WHERE id IN ({marks}) ORDER BY created_at, id", tuple(ids))
+            rows = self._rows(cur)
+        for r in rows:
+            r["diff"] = loads(r["diff"])
+            r["authoritative"] = bool(r["authoritative"])
+            r["created_at"] = ts(r["created_at"])
+        return rows
+
     def set_error_status(self, ids: Sequence[str], status: str, reason: str | None = None) -> None:
         if not ids:
             return
