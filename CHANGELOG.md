@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-28
+
+Behavioural results on 8 hosted models, use from any language over HTTP, and a container image.
 
 - **Use relock from any language:**
   - `relock serve` is an HTTP/JSON API with no dependencies, described by OpenAPI 3.1 in
     `docs/openapi.json`.
-  - It has bearer-token auth, refuses to bind publicly without a token, re-locks idle episodes,
-    limits request size and runs requests on threads.
+  - Security: bearer-token auth, and it refuses to bind publicly without a token. JSON types are
+    strict, so `"authenticated": "false"` is rejected, not read as true. Agent and environment
+    successes never raise confidence.
+  - Operation: idle episodes are re-locked in the background. It caps request size and
+    connections, times out stalled clients, accepts chunked bodies, and shuts down cleanly on
+    `SIGTERM`.
   - Example clients in Rust, TypeScript and curl run in CI against a live server.
   - A multi-arch container image is published to `ghcr.io/inboxpraveen/relock` on each release.
 - **`Episode.tool_result(tool, result, error=..., signal=...)`** reports a tool's real outcome
@@ -19,12 +25,14 @@
   `tool_result` binds and resolves atomically, so concurrent reports for one tool never collide.
 - **Every 5xx status is now transient.** A server fault says nothing about whether the agent's
   call was right. Previously 501, 505 and some other codes counted as `unknown` (weight 0.5).
-- **RelapseBench behavioural results on 8 hosted models**, in `docs/results/models/`. The study
-  code is `scripts/model_study.py` and `scripts/model_report.py`.
+- **RelapseBench behavioural results on 8 hosted models**, in `docs/results/models/`. In long
+  sessions, agents made the corrected call 98% of the time with relock, against 60% with
+  append-notes and 52% with append-clause. The study code is `scripts/model_study.py` and
+  `scripts/model_report.py`.
   - The behavioural scorer now judges which rule a call follows, ignoring formatting. For example,
     `a;b` follows the same `;` rule as `a; b`. No behavioural results had been published before
     this change.
-- Tested on Python 3.14 (CI and package classifiers).
+- Tested on Python 3.14 (CI and package classifiers). Development status is now beta.
 
 ## 0.1.1 - 2026-11-28
 

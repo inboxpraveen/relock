@@ -618,7 +618,8 @@ def openapi() -> dict[str, Any]:
         "info": {
             "title": "relock",
             "version": __version__,
-            "summary": "Agent memory that unlocks on recall, rewrites on surprise, and re-locks.",
+            "summary": "Agent memory that fixes the rule that fired, in place and only on trusted "
+                       "evidence, so corrected mistakes don't come back.",
             "description": (
                 "Language-neutral API for relock. Call it from your harness, the code that runs tools "
                 "and checks results, never from the model. Loop: POST /episodes, /recall (put "

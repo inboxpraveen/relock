@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "relock-memory"
-version = "0.1.1"
-description = "Agent memory that unlocks on recall, rewrites on surprise, and re-locks. Prediction-error-gated, in-place memory reconsolidation for LLM agents."
+version = "0.2.0"
+description = "Agent memory that fixes the rule that fired, in place and only on trusted evidence, so corrected mistakes don't come back. Python, HTTP (any language), MCP."
 dynamic = ["readme"]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -14,9 +14,10 @@ authors = [{ name = "Praveen Kumar" }]
 keywords = [
   "agents", "llm", "memory", "agent-memory", "reconsolidation",
   "procedural-memory", "self-improving", "mcp", "langchain", "langgraph",
+  "tool-calling", "openapi", "prompt-injection",
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "Operating System :: OS Independent",

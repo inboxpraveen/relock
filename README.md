@@ -5,32 +5,88 @@
 [![python](https://img.shields.io/pypi/pyversions/relock-memory)](https://pypi.org/project/relock-memory/)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Agent memory that unlocks on recall, rewrites on surprise, and re-locks.**
+**Agent memory that fixes the rule that fired, in place and only on trusted evidence, so
+corrected mistakes don't come back.**
 
-Most agent memories fix a mistake by *appending* ("don't do X"). The old instruction stays
-retrievable, and under long context, compaction or distracting tool output the old default wins
-again. relock fixes the instruction that fired, in place, but only when a **trusted** signal shows
-that its prediction was wrong, and only while that memory is **reactivated**.
+You corrected your agent: the orders API takes ISO dates now. Its memory saved the lesson as a
+note. Days later, deep into a long session, it sends `03/14/2026` again. The old rule was still in
+memory, next to the note, and the model followed it.
+
+Lesson notes, rules files and playbooks all keep both rules and hope the model picks the right
+one. relock edits the rule that fired, in place, under three conditions:
+
+- **Only on trusted evidence.** A typed tool error, a verifier or an authenticated user can
+  trigger a rewrite. The model's own claims, a web page, a timeout or a one-off flaky check can't.
+- **Only while that memory is recalled** in the current task. The retrieval trace records which
+  memory caused the failure, so the model never has to guess.
+- **The old version is kept, but never retrieved again.** Every version and every decision is
+  stored for audit and rollback.
+
+![Correct tool calls per model in a long session: append-notes, append-gated and relock](docs/results/models/by-model.svg)
+
+**The study:** 8 hosted models and 10 changed tool contracts, in long sessions with stale docs and
+a prompt injection in context. With relock, agents made the corrected call **98%** of the time.
+- A memory that appends each lesson as a note managed **60%**.
+- Appending the correction to the procedure, like a rules file, managed **52%**.
+- relock was ahead on all 8 models, with the 95% intervals apart for all 8.
+
+**Isolating the mechanism.** The baselines are our own implementations of those patterns, run on
+the same events. `append-gated` keeps relock's trust gate but still appends, and it reached
+**74%**: the gate keeps the poisoned "fix" out, and replacing the rule is what stops the relapse.
+
+The design was committed before the run, and every call is published. See the
+[results](docs/results/models/): 11,520 probe calls, $7.33 in API spend.
+
+## Is this your problem?
+
+relock is for you if:
+- your agent calls tools or APIs, and corrections to how it calls them don't stick;
+- your memory or rules file keeps growing "actually, do X instead" notes;
+- your agent learns from its own failures, and a prompt injection or a flaky test must not be able
+  to change what it learned.
+
+It is not for chat history, document RAG, or agents with no tool outcomes to learn from.
+
+## What's different
+
+| | lesson notes, vector memories | rules file, playbook | LLM-managed memory (a model picks add / update / delete) | relock |
+|---|---|---|---|---|
+| A correction replaces the old rule | no: both are retrievable | no: both are in the file | if the model chooses to | yes: the clause that fired is superseded |
+| What can change memory | any write | any write | a model, deciding from what it read | trusted signals only |
+| A prompt injection's "fix" | stored | stored | can be stored | logged, never applied |
+| A one-off flaky failure | stored | stored | can be stored | needs a second trusted error; the next success cancels it |
+| Which memory caused a failure | the model guesses | the model guesses | the model guesses | recorded by the retrieval trace |
+| History | varies | git, if any | varies | every version and decision, with rollback |
+
+Each idea exists somewhere, but we have not seen them packaged together:
+- writes are allowed only while a memory is recalled;
+- a write is triggered by a trusted prediction error;
+- the edit is scoped to the clause that fired;
+- the new version supersedes the old one instead of being appended.
+
+## Install
 
 ```
 pip install relock-memory            # core: zero dependencies
 pip install "relock-memory[all]"     # + Postgres, MCP, LangChain/LangGraph
+docker run -p 8765:8765 -e RELOCK_TOKEN=change-me ghcr.io/inboxpraveen/relock   # HTTP API
 ```
 
-The extras can also be installed one at a time: `[postgres]`, `[mcp]`, `[langchain]`.
-The distribution is `relock-memory` and the import is `relock_memory`, because the PyPI name
-`relock` belongs to an unrelated SDK that also installs a top-level `relock` module.
-The development version installs with
-`pip install "relock-memory @ git+https://github.com/inboxpraveen/relock"`.
+It works with Python agents, any MCP client, and any language over HTTP/JSON: Rust, TypeScript,
+Go and others. See [Plug it into your stack](#plug-it-into-your-stack).
 
-> **Status:** v0.1, alpha. The mechanism, storage, integrations and benchmark harness are
-> complete. They are tested on Python 3.10–3.14, SQLite and Postgres, and `mcp` 1.x and 2.x.
-> Behavioural benchmark numbers on open models are **not published yet**; see
-> [RelapseBench](#relapsebench) for what has and has not been measured.
+The extras install one at a time too: `[postgres]`, `[mcp]`, `[langchain]`. The import is
+`relock_memory`. The PyPI name `relock` belongs to an unrelated SDK.
+
+> **Status:** v0.2, beta. CI tests it on Python 3.10–3.14, on SQLite and Postgres, with `mcp`
+> 1.x and 2.x, and from Rust, TypeScript and curl over HTTP. Behavioural results on 8 hosted
+> models are in [docs/results/models](docs/results/models/).
 
 ---
 
 ## The mechanism
+
+Unlock on recall, rewrite on surprise, re-lock.
 
 relock borrows the *shape* of memory reconsolidation from neuroscience (a recalled memory becomes
 briefly editable, and prediction error drives the update). It is a metaphor for an engineering
@@ -112,6 +168,27 @@ safe is **the model predicts, the harness judges**.
 | Raw tool calling (OpenAI-compatible, Anthropic, vLLM, Ollama) | `relock.Toolkit(mem).openai_tools()` / `.anthropic_tools()` + `toolkit.call(name, args)` | a dispatcher branch |
 | LangChain / LangGraph | `RelockCallbackHandler(mem)` in `config={"callbacks": [...]}`. Existing tools stay untouched. `langchain_tools(Toolkit(mem))` gives the model `recall_memory` / `state_expectation`. | 1 line |
 | Anything that speaks MCP (Claude Code, Cursor, VS Code, OpenAI Agents SDK, LangGraph, PydanticAI...) | `relock mcp --db relock.db --verifier tests="pytest -q"` | config only |
+| **Any language**: Rust, TypeScript, Go, Java, C#... | `relock serve` or `docker run ghcr.io/inboxpraveen/relock`, then HTTP/JSON ([OpenAPI](docs/openapi.json), [guide](docs/http.md)) | 4 HTTP calls per task |
+
+### HTTP: any language
+
+```
+RELOCK_TOKEN=change-me relock serve        # or: docker run -p 8765:8765 -e RELOCK_TOKEN=change-me ghcr.io/inboxpraveen/relock
+```
+
+Each task is four calls from your harness:
+
+| step | request |
+|---|---|
+| open | `POST /v1/episodes` |
+| recall into the prompt | `POST /v1/episodes/{id}/recall` |
+| report each tool call's real outcome | `POST /v1/episodes/{id}/tool-result` |
+| re-lock | `POST /v1/episodes/{id}/close` |
+
+Clients for [Rust](examples/http/rust/src/main.rs), [TypeScript](examples/http/typescript/relock.ts)
+and [curl](examples/http/curl.sh) run this loop against a live server in CI. The full API is in
+[docs/http.md](docs/http.md). The server has no dependencies. Without a token it listens only on
+loopback, and it refuses a public address without one.
 
 ### MCP
 
@@ -190,7 +267,9 @@ relock answers that structurally, through the retrieval trace, the cited clauses
 diff. The rewriter only has to make a *local* edit: "here is the item, here is what it predicted,
 here is what happened, rewrite this clause". The rewrite prompt is built for that size class:
 one item, explicit clause ids, strict JSON, one worked example. Invalid output is fed back for a
-retry, `<think>` blocks are stripped, and the deterministic `HintRewriter` is the fallback.
+retry, `<think>` blocks are stripped, and the deterministic `HintRewriter` is the fallback. In the
+[behavioural study](docs/results/models/), each of the 8 models wrote relock's rewrites
+itself, two of them 27B models. None of the 960 rewrites fell back to `HintRewriter`.
 
 ```python
 llm = relock.OpenAICompatible("http://localhost:8000/v1", model="Qwen/Qwen3-30B-A3B-Instruct-2507")
@@ -259,20 +338,36 @@ What it shows:
   threshold), where append-style systems need 1. That is one extra failure per drift, paid for
   robustness against one-off noise. Set `min_evidence=1` to trade it back.
 
-### Behavioural mode (harness ready, results pending)
+### Behavioural mode (8 hosted models)
 
-Whether a model actually relapses when the old and new rules sit side by side, or when the
-correction was compacted away, is the headline question. It needs a real model:
+This mode measures what a model actually does after a correction. The agent learns from its own
+failures, the same model writes relock's rewrites, and then it is probed under load. The study
+compares four systems: `append-notes`, `append-clause`, `append-gated` and `relock`. The other
+systems above ran only in structural mode.
+
+![Correct calls by load, pooled over models](docs/results/models/by-load.svg)
+
+| load | append-notes | append-clause | append-gated | relock |
+|---|---|---|---|---|
+| L0: fresh session | 45% | 5% | 50% | 94% |
+| L1: 1.5k-token history | 46% | 10% | 50% | 99% |
+| L2: 4k-token history | 46% | 11% | 52% | 98% |
+| L3: 8k-token history, tight memory | 60% | 52% | 74% | 98% |
+
+Correct-call rates are pooled over 8 models and 3 seeds. Over all loads, relapse to the old rule
+and following the poisoned rule were each 0% with relock, against 22% and 25% with append-notes.
+The models wrote all 960 of relock's rewrites themselves, and none fell back to the deterministic
+rewriter; the correction text came from the tool error. The per-model and per-task tables, the
+costs and the caveats are in [docs/results/models](docs/results/models/).
+
+To run it on your own model:
 
 ```
 relock bench --mode behavioral --base-url http://localhost:8000/v1 \
              --model Qwen/Qwen3-30B-A3B-Instruct-2507
 ```
 
-This runs a closed loop: the agent learns from its own failures, the same model performs relock's
-rewrites, and then it is probed under load. Reported metrics are relapse, poisoned and correct
-rates with Wilson intervals, plus learning cost. **No behavioural numbers are published yet.**
-Contributions of runs on open models are very welcome; please include `behavioral.json`.
+Results on other models are welcome; please include `behavioral.json`.
 
 ## CLI
 
@@ -287,6 +382,7 @@ relock rollback orders.fetch 1    # restores v1 as a new version (history is nev
 relock edit orders.fetch --replace c2 "Pass dates as YYYY-MM-DD."
 relock export traces.jsonl        # SFT and preference pairs from every rewrite
 relock mcp --verifier tests="pytest -q" [--cwd DIR] [--allow-teach] [--trust-agent-reports]
+relock serve [--host H] [--port P]  # HTTP/JSON API for any language (RELOCK_TOKEN for auth)
 relock bench [--mode structural|behavioral|both]
 ```
 
@@ -323,21 +419,23 @@ directly queryable. The schema is documented in [docs/design.md](docs/design.md)
 - **ReasoningBank** distils strategies from the agent's own judged successes and failures.
 - **ACE** grows playbooks through incremental deltas with helpful/harmful counters.
 
-relock combines three things we have not seen packaged together:
+Mem0 can also update a memory in place, when its model chooses to. relock combines four things we
+have not seen packaged together:
 
-- writes gated on **retrieval** (lability),
-- triggered by an **explicit, trusted prediction error**,
-- applied **in place with supersession** rather than appended.
+- writes gated on **retrieval** (lability);
+- triggered by an **explicit, trusted prediction error**, never by what the model read;
+- **scoped to the clause that fired**;
+- applied **in place with supersession** rather than appended, with every version kept.
 
 It is meant to sit under any of these styles, or under your own harness.
 
 ## Roadmap
 
-- Behavioural RelapseBench results on open ~30B models, plus a long-horizon variant with real
+- Behavioural RelapseBench on self-hosted open models, plus a long-horizon variant with real
   context compaction.
 - Weight tier: periodically distil accumulated rewrite traces for a skill into adapter weights.
   Fast edits live in the harness, durable ones in the weights.
-- pgvector retrieval inside Postgres; a TypeScript client for the MCP server.
+- pgvector retrieval inside Postgres; published client packages for the HTTP API (npm, crates.io).
 - Per-tenant ledgers and signed user corrections.
 
 ## Development

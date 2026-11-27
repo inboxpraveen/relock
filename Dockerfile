@@ -7,7 +7,7 @@
 FROM python:3.13-slim
 
 LABEL org.opencontainers.image.source="https://github.com/inboxpraveen/relock" \
-      org.opencontainers.image.description="relock: agent memory that unlocks on recall, rewrites on surprise, and re-locks." \
+      org.opencontainers.image.description="relock: agent memory that fixes the rule that fired, in place and only on trusted evidence, so corrected mistakes don't come back." \
       org.opencontainers.image.licenses="Apache-2.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
