@@ -24,7 +24,7 @@ The development version installs with
 `pip install "relock-memory @ git+https://github.com/inboxpraveen/relock"`.
 
 > **Status:** v0.1, alpha. The mechanism, storage, integrations and benchmark harness are
-> complete. They are tested on Python 3.10–3.13, SQLite and Postgres, and `mcp` 1.x and 2.x.
+> complete. They are tested on Python 3.10–3.14, SQLite and Postgres, and `mcp` 1.x and 2.x.
 > Behavioural benchmark numbers on open models are **not published yet**; see
 > [RelapseBench](#relapsebench) for what has and has not been measured.
 
@@ -350,7 +350,7 @@ RELOCK_TEST_POSTGRES_URL=postgresql://... pytest # + Postgres
 ruff check src tests examples
 ```
 
-CI runs the suite on Python 3.10–3.13 against SQLite and Postgres. It also runs the MCP tests
+CI runs the suite on Python 3.10–3.14 against SQLite and Postgres. It also runs the MCP tests
 on the `mcp` 1.x line. See [CONTRIBUTING.md](CONTRIBUTING.md) for the invariants a change must
 keep. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 

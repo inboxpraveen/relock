@@ -20,7 +20,7 @@ docker run -d --rm --name relock-pg -p 127.0.0.1:55432:5432 \
 RELOCK_TEST_POSTGRES_URL=postgresql://relock:relock@127.0.0.1:55432/relock pytest
 ```
 
-CI runs the same checks on Python 3.10–3.13, plus the MCP tests on the `mcp` 1.x line.
+CI runs the same checks on Python 3.10–3.14, plus the MCP tests on the `mcp` 1.x line.
 
 ## Invariants a change must keep
 

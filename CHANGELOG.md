@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Tested on Python 3.14 (CI and package classifiers).
+
 ## 0.1.1 - 2026-11-28
 
 First release on PyPI: `pip install relock-memory`. No changes to the memory mechanism.
