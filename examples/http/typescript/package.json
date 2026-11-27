@@ -1,0 +1,6 @@
+{
+  "name": "relock-typescript-example",
+  "private": true,
+  "type": "module",
+  "scripts": { "demo": "node demo.ts" }
+}

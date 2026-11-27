@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+.venv
+venv
+dist
+build
+bench-results
+**/__pycache__
+**/*.pyc
+*.db
+*.db-wal
+*.db-shm
+examples/http/rust/target

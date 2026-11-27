@@ -1,0 +1,1100 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "relock",
+    "version": "0.1.1",
+    "summary": "Agent memory that unlocks on recall, rewrites on surprise, and re-locks.",
+    "description": "Language-neutral API for relock. Call it from your harness, the code that runs tools and checks results, never from the model. Loop: POST /episodes, /recall (put `context` in the prompt), report each tool call with /tool-result, then /close. Authenticate with `Authorization: Bearer $RELOCK_TOKEN` when the server has a token.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8765"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Clause": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "Item": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "clauses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Clause"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "meta": {
+            "type": "object"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "confirmations": {
+            "type": "integer"
+          },
+          "failures": {
+            "type": "integer"
+          },
+          "change_kind": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "archived": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "correction": {
+            "type": "string",
+            "description": "The rule that would have been right, e.g. 'Pass dates as YYYY-MM-DD.' Drives the rewrite."
+          },
+          "status": {
+            "type": "integer",
+            "description": "HTTP status of the failed call, if any. 408/425/429/5xx count as transient."
+          },
+          "transient": {
+            "type": "boolean",
+            "description": "Timeouts, rate limits: never rewrite."
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "transient",
+              "programmatic",
+              "semantic",
+              "unknown"
+            ]
+          },
+          "detail_trusted": {
+            "type": "boolean",
+            "default": true,
+            "description": "false if message/correction echo remote content; the failure still counts but its text never reaches the rewriter."
+          }
+        }
+      },
+      "Outcome": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Did the call succeed / the prediction hold?"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "tool",
+              "verifier",
+              "agent",
+              "environment"
+            ],
+            "default": "tool",
+            "description": "Who observed the outcome. tool and verifier are trusted; agent and environment are logged but never rewrite memory (by default)."
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorDetail"
+              }
+            ]
+          },
+          "verifier": {
+            "type": "string",
+            "description": "Verifier name, for source=verifier."
+          }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "properties": {
+          "expectation_id": {
+            "type": "string"
+          },
+          "matched": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "pending",
+              "rewritten",
+              "blocked",
+              "declined",
+              "invalid_edit",
+              "conflict",
+              "ignored"
+            ]
+          },
+          "item_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "new_version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "number"
+          },
+          "required": {
+            "type": "number"
+          },
+          "delta": {}
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Liveness and version",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "open_episodes": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "summary": "This document",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/items": {
+      "get": {
+        "summary": "List active items",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a procedure",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "clauses"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "clauses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Tools this item governs; their outcomes resolve it."
+                  },
+                  "meta": {
+                    "type": "object"
+                  },
+                  "exist_ok": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/items/{ref}": {
+      "get": {
+        "summary": "Get the active (or a given) version",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key or id."
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/items/{ref}/history": {
+      "get": {
+        "summary": "All versions, oldest first",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Item key or id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes": {
+      "post": {
+        "summary": "Open an episode (a reconsolidation window)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "type": "string"
+                  },
+                  "meta": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "episode_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/recall": {
+      "post": {
+        "summary": "Retrieve procedures; recalled items become editable in this episode",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "k": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "budget_tokens": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "context": {
+                      "type": "string",
+                      "description": "Prompt block to give the model."
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Item"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/use": {
+      "post": {
+        "summary": "Load an item by key (also makes it editable)",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "item"
+                ],
+                "properties": {
+                  "item": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/expect": {
+      "post": {
+        "summary": "Record a prediction before acting (optional; tool-result creates one if absent)",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "item"
+                ],
+                "properties": {
+                  "item": {
+                    "type": "string"
+                  },
+                  "prediction": {
+                    "type": "string"
+                  },
+                  "clauses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Clause ids relied on; limits what can be rewritten."
+                  },
+                  "tool": {
+                    "type": "string",
+                    "description": "Bind to a tool so /tool-result resolves it."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "expectation_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/observe": {
+      "post": {
+        "summary": "Resolve one expectation with an outcome",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "ok"
+                    ],
+                    "properties": {
+                      "ok": {
+                        "type": "boolean",
+                        "description": "Did the call succeed / the prediction hold?"
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "tool",
+                          "verifier",
+                          "agent",
+                          "environment"
+                        ],
+                        "default": "tool",
+                        "description": "Who observed the outcome. tool and verifier are trusted; agent and environment are logged but never rewrite memory (by default)."
+                      },
+                      "error": {
+                        "oneOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/components/schemas/ErrorDetail"
+                          }
+                        ]
+                      },
+                      "verifier": {
+                        "type": "string",
+                        "description": "Verifier name, for source=verifier."
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "expectation_id"
+                    ],
+                    "properties": {
+                      "expectation_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/tool-result": {
+      "post": {
+        "summary": "Report a tool call's real outcome (what @mem.wrap does in Python)",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "ok"
+                    ],
+                    "properties": {
+                      "ok": {
+                        "type": "boolean",
+                        "description": "Did the call succeed / the prediction hold?"
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "tool",
+                          "verifier",
+                          "agent",
+                          "environment"
+                        ],
+                        "default": "tool",
+                        "description": "Who observed the outcome. tool and verifier are trusted; agent and environment are logged but never rewrite memory (by default)."
+                      },
+                      "error": {
+                        "oneOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/components/schemas/ErrorDetail"
+                          }
+                        ]
+                      },
+                      "verifier": {
+                        "type": "string",
+                        "description": "Verifier name, for source=verifier."
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "tool"
+                    ],
+                    "properties": {
+                      "tool": {
+                        "type": "string"
+                      },
+                      "result": {},
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Attribute to these items instead of by tool name."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "observations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Decision"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/correct": {
+      "post": {
+        "summary": "A human correction (rewrites only with authenticated=true)",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "item",
+                  "correction"
+                ],
+                "properties": {
+                  "item": {
+                    "type": "string"
+                  },
+                  "correction": {
+                    "type": "string"
+                  },
+                  "clauses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "principal": {
+                    "type": "string"
+                  },
+                  "authenticated": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set only after your app verified the user."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/episodes/{episode_id}/close": {
+      "post": {
+        "summary": "Re-lock: the episode's items are no longer editable",
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

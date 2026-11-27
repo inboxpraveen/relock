@@ -351,3 +351,22 @@ def test_forked_children_do_not_continue_the_parents_id_sequence():
     state = os.read(r, 100).decode()
     os.waitpid(pid, 0)
     assert state == "[0, 0]"
+
+
+def test_explicit_failed_signal_is_not_overridden_by_the_check():
+    import relock_memory as rl
+
+    mem = rl.Memory(":memory:")
+    mem.add("Fetch", ["Pass dates as MM/DD/YYYY."], key="f", tools=["get"])
+    with mem.episode("t") as ep:
+        ep.recall("fetch dates")
+        obs = ep.tool_result("get", signal=rl.Signal.tool_error("bad date", correction="Pass dates as YYYY-MM-DD."))
+        assert [o.matched for o in obs] == [False]
+        assert obs[0].verdict.value == "pending"
+        exp = ep.expect("f", "get works", tool="get")
+        assert ep.observe(exp, signal=rl.Signal.tool_error("bad date")).matched is False
+        assert ep.tool_result("unknown_tool", error="x") == []
+    with mem.episode("t2") as ep:
+        ep.recall("fetch dates")
+        assert ep.tool_result("get", [1, 2])[0].verdict.value == "confirmed"
+    mem.close()

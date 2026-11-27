@@ -24,8 +24,9 @@ from relock_memory.bench.scenarios import FAMILIES
 UNITS = Path("bench-results/models/units")
 OUT = Path("docs/results/models")
 SYSTEMS = ["append-notes", "append-clause", "append-gated", "relock"]
-LOADS = ["L0", "L1", "L3"]
-LOAD_NAMES = {"L0": "fresh session", "L1": "1.5k-token history", "L3": "8k-token history, tight memory"}
+LOADS = ["L0", "L1", "L2", "L3"]
+LOAD_NAMES = {"L0": "fresh session", "L1": "1.5k-token history", "L2": "4k-token history",
+              "L3": "8k-token history, tight memory"}
 SYSTEM_NAMES = {
     "append-notes": "append-notes (each correction becomes a new memory note)",
     "append-clause": "append-clause (the correction is appended to the procedure, like a rules file)",
@@ -131,8 +132,10 @@ def dumbbell(summary: dict[str, Any], load: str) -> str:
     height = top + row_h * len(rows) + 52
     x = lambda v: label_w + v * plot_w  # noqa: E731
     title = "Corrected once. Does the agent keep doing it right?"
+    n_dot = round(sum(summary["outcomes"][f"{m}|relock|{load}"]["correct"]["n"] for m in models) / len(models))
+    n_all = summary["outcomes"][f"all|relock|{load}"]["correct"]["n"]
     sub = (f"Correct tool calls in a long session ({LOAD_NAMES[load]}), after the same correction, "
-           "noise and prompt injection. 60 calls per dot; pooled row: 480.")
+           f"noise and prompt injection. About {n_dot} calls per dot; pooled row: {n_all}.")
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
         "role=\"img\" aria-labelledby=\"t d\" font-family=\"system-ui, -apple-system, 'Segoe UI', sans-serif\">",
@@ -174,7 +177,7 @@ def dumbbell(summary: dict[str, Any], load: str) -> str:
         cy = top + i * row_h + row_h / 2 - 6
         if m == "all":
             out.append(f'<line class="a" x1="16" y1="{cy - row_h / 2 + 1}" x2="{width - 16}" y2="{cy - row_h / 2 + 1}"/>')
-        name = "all 8 models" if m == "all" else short(m)
+        name = f"all {len(models)} models" if m == "all" else short(m)
         out.append(f'<text class="{"lh" if m == "all" else "l"}" x="{label_w - 14}" y="{cy + 4}" '
                    f'text-anchor="end">{escape(name)}</text>')
         o = summary["outcomes"]
@@ -210,14 +213,14 @@ def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | N
     wrong_an, wrong_rl = (1 - an3["rate"]) * 1000, (1 - rl3["rate"]) * 1000
     lines: list[str] = []
     w = lines.append
-    w("# relock vs. \"append the lesson\": 8 models, 10 changed tool contracts")
+    w(f"# relock vs. \"append the lesson\": {len(s['models'])} models, {len(FAMILIES)} changed tool contracts")
     w("")
     w("An agent is corrected: the API now wants ISO dates, amounts in cents, the EU region. Later it")
     w("works through a long session, with stale docs and an injected web page in its context. Does it")
     w("keep making the corrected call?")
     w("")
     w(f"**Long sessions:** with relock, agents made the corrected call **{pct(rl3['rate'])}** of the")
-    w("time, pooled over 8 models.")
+    w(f"time, pooled over {len(s['models'])} models.")
     w(f"- A memory that appends each lesson as a note managed **{pct(an3['rate'])}**.")
     w(f"- Appending the correction to the procedure, like a rules file, managed **{pct(ac3['rate'])}**.")
     w(f"- relock beat append-notes for **{better} of {len(s['models'])} models**. The 95% intervals don't")
@@ -273,7 +276,7 @@ def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | N
         w("| model | append-notes | append-clause | append-gated | relock |")
         w("|---|---|---|---|---|")
         for m in [*s["models"], "all"]:
-            name = "**all 8 models**" if m == "all" else f"`{m}`"
+            name = f"**all {len(s['models'])} models**" if m == "all" else f"`{m}`"
             w(f"| {name} | " + " | ".join(ci(L(m, sy, ld)) for sy in SYSTEMS) + " |")
         w("")
     w("![Correct calls by load, pooled over models](by-load.svg)")
@@ -330,8 +333,8 @@ def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | N
     w("")
     paid = sum(sum(p["cost"] for p in u["probes"]) + u["learn_cost"] + u["rewrite_cost"] for u in units)
     w(f"- **Recorded spend:** ${paid:.2f} for {sum(len(u['probes']) for u in units):,} probe calls, plus")
-    w("  learning and rewrite calls, across 8 models. The run used OpenRouter's default provider")
-    w("  routing.")
+    w(f"  learning and rewrite calls, across {len(s['models'])} models. The first run (seeds 0-1) used")
+    w("  OpenRouter's default provider routing; the extension used each model's cheapest provider.")
     if prices:
         tok = defaultdict(lambda: [0, 0])
         for u in units:
@@ -399,14 +402,15 @@ def main(argv: list[str] | None = None) -> int:
     by_load = [(f"{ld}: {LOAD_NAMES[ld]}", {sy: o[f"all|{sy}|{ld}"]["correct"]["rate"] for sy in SYSTEMS})
                for ld in LOADS]
     (OUT / "by-load.svg").write_text(svg_panels(
-        "Correct tool calls after a correction", "Pooled over 8 models (about 480 calls per bar). Longer, "
-        "noisier sessions to the right.", by_load, SYSTEMS) + "\n", encoding="utf-8", newline="\n")
+        "Correct tool calls after a correction", f"Pooled over {len(s['models'])} models (about "
+        f"{o['all|relock|L3']['correct']['n']} calls per bar). Longer, noisier sessions to the right.",
+        by_load, SYSTEMS) + "\n", encoding="utf-8", newline="\n")
     outcome_panels = [(title, {sy: o[f"all|{sy}|all"][key]["rate"] for sy in SYSTEMS})
                       for key, title in (("correct", "Correct call"), ("relapse", "Relapsed to the old rule"),
                                          ("poisoned", "Followed the poisoned rule"))]
     (OUT / "outcomes.svg").write_text(svg_panels(
-        "What the agent did after being corrected", "Pooled over 8 models and all loads (about 1,440 calls "
-        "per bar).", outcome_panels, SYSTEMS) + "\n", encoding="utf-8", newline="\n")
+        "What the agent did after being corrected", f"Pooled over {len(s['models'])} models and all loads "
+        f"(about {o['all|relock|all']['correct']['n']:,} calls per bar).", outcome_panels, SYSTEMS) + "\n", encoding="utf-8", newline="\n")
     prices = fetch_prices() if args.prices else None
     (OUT / "README.md").write_text(build_markdown(s, prices, units), encoding="utf-8", newline="\n")
     print(f"wrote {OUT}/README.md, summary.json, records.csv, by-model.svg, by-load.svg, outcomes.svg")

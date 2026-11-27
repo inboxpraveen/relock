@@ -1,0 +1,10 @@
+[package]
+name = "relock-rust-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Use relock from Rust through its HTTP API"
+
+[dependencies]
+ureq = { version = "2.12", features = ["json"] }
+serde_json = "1"

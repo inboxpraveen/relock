@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Use relock from any language:**
+  - `relock serve` is an HTTP/JSON API with no dependencies, described by OpenAPI 3.1 in
+    `docs/openapi.json`.
+  - It has bearer-token auth, refuses to bind publicly without a token, re-locks idle episodes,
+    limits request size and runs requests on threads.
+  - Example clients in Rust, TypeScript and curl run in CI against a live server.
+  - A multi-arch container image is published to `ghcr.io/inboxpraveen/relock` on each release.
+- **`Episode.tool_result(tool, result, error=..., signal=...)`** reports a tool's real outcome
+  without wrapping the tool, the same way `@mem.wrap` does.
+- **Fix:** a failure passed explicitly as a signal, such as
+  `ep.observe(exp, signal=Signal.tool_error(...))`, was recorded as a success when the
+  expectation had a `succeeds()` check and no exception was passed.
+- **RelapseBench behavioural results on 8 hosted models**, in `docs/results/models/`. The study
+  code is `scripts/model_study.py` and `scripts/model_report.py`.
+  - The behavioural scorer now judges which rule a call follows, ignoring formatting. For example,
+    `a;b` follows the same `;` rule as `a; b`. No behavioural results had been published before
+    this change.
 - Tested on Python 3.14 (CI and package classifiers).
 
 ## 0.1.1 - 2026-11-28

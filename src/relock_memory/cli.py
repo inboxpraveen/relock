@@ -181,6 +181,19 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .integrations.http import serve
+
+    token = os.environ.get("RELOCK_TOKEN") or None
+    try:
+        serve(args.db, host=args.host, port=args.port, token=token, rewriter=_llm_rewriter(args),
+              idle_timeout=args.idle_timeout or None, k=args.k)
+    except (ValueError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="relock", description="Agent memory that unlocks on recall, rewrites on "
                                                            "surprise, and re-locks.")
@@ -266,7 +279,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--idle-timeout", type=float, default=1800.0,
                     help="re-lock an episode after this many idle seconds (0 disables; default 1800)")
     sp.add_argument("-k", type=int, default=3, help="items per recall")
-    for target in (sp,):
+    serve_p = sub.add_parser(
+        "serve", help="Run the HTTP/JSON API (any language).",
+        description="Run relock's HTTP/JSON API for harnesses in any language. Set RELOCK_TOKEN to require "
+                    "'Authorization: Bearer <token>'; without it the server only listens on loopback.")
+    serve_p.set_defaults(fn=None, serve=True)
+    serve_p.add_argument("--host", default=os.environ.get("RELOCK_HOST", "127.0.0.1"))
+    serve_p.add_argument("--port", type=int, default=int(os.environ.get("RELOCK_PORT", "8765")))
+    serve_p.add_argument("--idle-timeout", type=float, default=1800.0,
+                         help="re-lock an episode after this many idle seconds (0 disables; default 1800)")
+    serve_p.add_argument("-k", type=int, default=3, help="default items per recall")
+    for target in (sp, serve_p):
         target.add_argument("--llm-base-url", default=os.environ.get("RELOCK_LLM_BASE_URL"),
                             help="OpenAI-compatible endpoint for the LLM rewriter (default: hint rewriter)")
         target.add_argument("--llm-model", default=os.environ.get("RELOCK_LLM_MODEL"))
@@ -294,6 +317,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
     if getattr(args, "mcp", False):
         return cmd_mcp(args)
+    if getattr(args, "serve", False):
+        return cmd_serve(args)
     mem = Memory(args.db)
     try:
         return int(args.fn(args, mem) or 0)

@@ -233,6 +233,9 @@ class Episode:
             self._resolved.add(exp.id)
 
             exc = error if isinstance(error, BaseException) else None
+            # A failure the caller states explicitly is never overridden by the expectation's
+            # check: succeeds() would otherwise see "no exception" and call it a success.
+            explicit_failure = signal is not None and signal.passed is False
             if signal is None:
                 signal = Signal.tool_error(error) if error is not None else Signal.ok()
             value = None if result is _MISSING else result
@@ -240,7 +243,7 @@ class Episode:
             if matched is not None:
                 is_match, reason = bool(matched), "reported by caller"
             elif signal.passed is not None and (signal.source is not Source.TOOL or error is not None
-                                                or exp.check is None):
+                                                or exp.check is None or explicit_failure):
                 is_match = bool(signal.passed)
                 reason = signal.message or ("passed" if is_match else "failed")
             elif exp.check is not None:
@@ -465,6 +468,25 @@ class Episode:
         """Shorthand for a verifier verdict on a recalled item: expect + observe in one call."""
         exp = self.expect(target, statement or "verifier passes", clauses=clauses)
         return self.observe(exp, signal=Signal.verifier(passed, message, correction=correction, name=verifier))
+
+    def tool_result(self, tool: str, result: Any = None, *, error: BaseException | str | None = None,
+                    signal: Signal | None = None, items: list[str] | tuple[str, ...] | None = None,
+                    ) -> list[Observation]:
+        """Report a tool call's real outcome, exactly as ``@mem.wrap`` would, for tools you can't wrap.
+
+        It resolves the open expectations bound to ``tool``. Without any, it creates an automatic
+        ``succeeds()`` expectation for each recalled item that lists the tool, or for ``items``.
+        Report a failure with ``error`` (an exception or message) or a ready-made ``signal``.
+        Returns one observation per resolved expectation, or none if no recalled item governs
+        the tool.
+        """
+        self._ensure_open()
+        exps = self._bind_tool(tool, list(items) if items else None)
+        if signal is not None:
+            return [self.observe(e, signal=signal) for e in exps]
+        if error is not None:
+            return [self.observe(e, error=error) for e in exps]
+        return [self.observe(e, result) for e in exps]
 
     def _bind_tool(self, tool: str, refs: list[str] | None) -> list[Expectation]:
         """Expectations a wrapped tool call should resolve (explicit ones first, else automatic)."""
