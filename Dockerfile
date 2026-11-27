@@ -4,7 +4,7 @@
 #
 # The server refuses to listen publicly without RELOCK_TOKEN. Data lives in /data (SQLite by
 # default); set RELOCK_DB=postgresql://... to use Postgres instead.
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 LABEL org.opencontainers.image.source="https://github.com/inboxpraveen/relock" \
       org.opencontainers.image.description="relock: agent memory that fixes the rule that fired, in place and only on trusted evidence, so corrected mistakes don't come back." \
