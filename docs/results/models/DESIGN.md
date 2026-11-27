@@ -78,4 +78,21 @@ ignored (`a;b` and `a; b` both follow the `;` rule).
   reruns can differ slightly. The provider of every call is recorded.
 - **Budget:** about $5 in total, set by the person running the study.
 
+## Extension (added after the first run)
+
+The first run (seeds 0–1; loads `L0`, `L1`, `L3`; $4.30) is committed unchanged as
+`docs/results/models/` in commit `e82276b`. The budget was then raised to about $10 in total, and the
+same design was extended to every model and system alike:
+
+- **Seed 2** for loads `L0`, `L1` and `L3`.
+- **Load `L2`:** 4k tokens of history, with seeds 0–2.
+- **A clean re-run of the `gpt-6-luna` units** that hit API errors. The responses that succeeded
+  come from the cache, so only the failed calls are sent again.
+- **Cheapest-provider routing** for these calls (`provider.sort = price`). The first run used
+  OpenRouter's default load balancing.
+
+The primary metric and the scoring are unchanged. The published report pools both runs.
+If the budget had not covered every model, the most expensive one (`moonshotai/kimi-k3`) would
+have been dropped from the extension, not given a smaller design.
+
 Reproduce with `python scripts/model_study.py run` and an OpenRouter key.
