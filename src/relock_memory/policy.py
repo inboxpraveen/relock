@@ -76,7 +76,8 @@ class WritePolicy:
         if signal.source not in self.trusted_sources:
             return Admission(False, 0.0, f"untrusted source '{signal.source.value}'")
         if signal.source is Source.USER and self.require_authenticated_user and not signal.authenticated:
-            return Admission(False, 0.0, "unauthenticated user correction")
+            return Admission(False, 0.0, "unauthenticated user correction "
+                                         "(pass authenticated=True once your app has verified the user)")
         cls = signal.error_class or ErrorClass.UNKNOWN
         if cls is ErrorClass.TRANSIENT and self.block_transient:
             return Admission(False, 0.0, "transient error (says nothing about the procedure)")

@@ -44,7 +44,7 @@ def test_cli_roundtrip(tmp_path, capsys):
     mem = rl.Memory(db)
     with mem.episode() as ep:
         ep.recall("fetch orders")
-        ep.correct("orders", "Call get_orders with YYYY-MM-DD.", principal="cli-test")
+        ep.correct("orders", "Call get_orders with YYYY-MM-DD.", principal="cli-test", authenticated=True)
     mem.close()
     capsys.readouterr()
     assert main(["--db", db, "history", "orders"]) == 0

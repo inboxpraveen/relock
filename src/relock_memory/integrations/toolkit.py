@@ -16,6 +16,7 @@ LlamaIndex, AutoGen, raw OpenAI / Anthropic / vLLM tool calling.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -35,18 +36,31 @@ class Toolkit:
         allow_reports: bool = True,
         allow_teach: bool = False,
         task: str = "",
+        idle_timeout: float | None = 1800.0,
     ) -> None:
+        """``idle_timeout``: seconds without a toolkit call after which an episode the toolkit
+        opened itself is closed (re-locked) and the next call starts a fresh one. Clients that
+        never call ``end`` would otherwise keep their recalled items editable indefinitely.
+        ``None`` disables it. Episodes you open yourself are never closed by the toolkit."""
         self.memory = memory
         self.k = k
         self.budget_tokens = budget_tokens
         self.allow_reports = allow_reports
         self.allow_teach = allow_teach
         self.task = task
+        self.idle_timeout = idle_timeout
         self._own: Episode | None = None
+        self._last_used = time.monotonic()
 
     # ------------------------------------------------------------------ episode plumbing
     def episode(self) -> Episode:
         """The active episode (yours, if you opened one), else one the toolkit opens and owns."""
+        now = time.monotonic()
+        idle = now - self._last_used
+        self._last_used = now
+        if (self._own is not None and not self._own.closed and self.idle_timeout is not None
+                and idle > self.idle_timeout):
+            self._own.close()  # re-lock: whatever the client recalled before going quiet
         ep = self.memory.current_episode()
         if ep is not None:
             return ep
@@ -58,6 +72,7 @@ class Toolkit:
         """Start a fresh memory episode for a new task. Returns the episode id."""
         self.end_episode()
         self._own = self.memory.episode(task or self.task or "toolkit session")
+        self._last_used = time.monotonic()
         return self._own.id
 
     def end_episode(self) -> str:

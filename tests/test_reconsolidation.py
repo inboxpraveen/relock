@@ -129,7 +129,8 @@ def test_authenticated_user_correction_is_authoritative(mem, orders):
     item, _ = orders
     with mem.episode("t") as ep:
         ep.recall("fetch orders")
-        obs = ep.correct(item, "Call get_orders with the date as YYYY-MM-DD.", principal="alice", clauses=["c2"])
+        obs = ep.correct(item, "Call get_orders with the date as YYYY-MM-DD.", principal="alice",
+                         authenticated=True, clauses=["c2"])
         assert obs.verdict is Verdict.REWRITTEN
     assert mem.get(item.key).clause("c2").text == "Call get_orders with the date as YYYY-MM-DD."
 

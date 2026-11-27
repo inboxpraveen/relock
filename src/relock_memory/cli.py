@@ -173,7 +173,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         verifiers[name.strip()] = command.strip()
     serve(args.db, transport=args.transport, rewriter=_llm_rewriter(args), verifiers=verifiers,
           verifier_timeout=args.verifier_timeout, trust_agent_reports=args.trust_agent_reports,
-          allow_teach=not args.no_teach, k=args.k)
+          allow_teach=args.allow_teach, idle_timeout=args.idle_timeout or None, k=args.k)
     return 0
 
 
@@ -255,7 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verifier-timeout", type=float, default=600.0)
     sp.add_argument("--trust-agent-reports", action="store_true",
                     help="let the agent's own outcome reports rewrite memory (single-user sandboxes only)")
-    sp.add_argument("--no-teach", action="store_true", help="do not let the agent add new items")
+    sp.add_argument("--allow-teach", action="store_true",
+                    help="expose relock_teach so the agent can add new items (agent-written content)")
+    sp.add_argument("--idle-timeout", type=float, default=1800.0,
+                    help="re-lock an episode after this many idle seconds (0 disables; default 1800)")
     sp.add_argument("-k", type=int, default=3, help="items per recall")
     for target in (sp,):
         target.add_argument("--llm-base-url", default=os.environ.get("RELOCK_LLM_BASE_URL"),

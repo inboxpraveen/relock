@@ -133,10 +133,15 @@ class Signal:
         correction: str,
         *,
         principal: str | None = None,
-        authenticated: bool = True,
+        authenticated: bool = False,
         **data: Any,
     ) -> Signal:
-        """A human correction. Pass ``authenticated=False`` when you cannot vouch for who sent it."""
+        """A human correction.
+
+        Pass ``authenticated=True`` only when your application has verified who sent it
+        (a logged-in operator, a signed request). Unauthenticated corrections are logged
+        but never rewrite memory: "the user said so" is exactly what an injection claims.
+        """
         return cls(
             source=Source.USER,
             passed=False,

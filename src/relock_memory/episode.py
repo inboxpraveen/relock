@@ -447,8 +447,13 @@ class Episode:
 
     # ------------------------------------------------------------------ conveniences
     def correct(self, target: str | Item | Hit, correction: str, *, principal: str | None = None,
-                authenticated: bool = True, clauses: list[str] | None = None) -> Observation:
-        """Apply a human correction to a recalled item (authoritative when authenticated)."""
+                authenticated: bool = False, clauses: list[str] | None = None) -> Observation:
+        """Apply a human correction to a recalled item.
+
+        Pass ``authenticated=True`` once your application has verified the user; the
+        correction is then authoritative and rewrites immediately. Without it the
+        correction is logged as blocked.
+        """
         exp = self.expect(target, "behaviour matches the user's instructions", clauses=clauses)
         return self.observe(exp, signal=Signal.user(correction, principal=principal, authenticated=authenticated))
 

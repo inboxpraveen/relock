@@ -71,7 +71,8 @@ def build_server(
     verifier_timeout: float = 600.0,
     verifier_cwd: str | None = None,
     trust_agent_reports: bool = False,
-    allow_teach: bool = True,
+    allow_teach: bool = False,
+    idle_timeout: float | None = 1800.0,
     k: int = 3,
     name: str = "relock",
 ) -> Any:
@@ -79,7 +80,7 @@ def build_server(
     if trust_agent_reports and Source.AGENT not in memory.policy.trusted_sources:
         memory.policy = memory.policy.with_(trusted_sources=memory.policy.trusted_sources | {Source.AGENT})
     verifiers = dict(verifiers or {})
-    kit = Toolkit(memory, k=k, allow_reports=True, allow_teach=allow_teach)
+    kit = Toolkit(memory, k=k, allow_reports=True, allow_teach=allow_teach, idle_timeout=idle_timeout)
     server_cls = _load_server_class()
     server = server_cls(name, instructions=INSTRUCTIONS)
 
