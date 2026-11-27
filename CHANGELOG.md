@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-11-28
+
+Documentation only; no code changes.
+
+- Fix the citation link for Sevenster, Beckers and Kindt (2013) in the README.
+
 ## 0.2.1 - 2026-11-28
 
 Documentation only; no code changes.
