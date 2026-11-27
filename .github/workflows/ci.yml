@@ -100,13 +100,19 @@ jobs:
             for i in $(seq 30); do curl -fsS "http://127.0.0.1:$port/v1/health" && break; sleep 1; done
           done
       - name: curl
-        run: RELOCK_URL=http://127.0.0.1:8801 sh examples/http/curl.sh | tee out.txt && grep -q "attempt 3: confirmed" out.txt
+        run: |
+          RELOCK_URL=http://127.0.0.1:8801 sh examples/http/curl.sh | tee out.txt
+          grep -q "attempt 3: confirmed" out.txt
       - name: TypeScript
         working-directory: examples/http/typescript
-        run: RELOCK_URL=http://127.0.0.1:8802 node demo.ts | tee out.txt && grep -q "attempt 3: get_orders(2026-03-14) ok -> confirmed" out.txt
+        run: |
+          RELOCK_URL=http://127.0.0.1:8802 node demo.ts | tee out.txt
+          grep -q "attempt 3: get_orders(2026-03-14) ok -> confirmed" out.txt
       - name: Rust
         working-directory: examples/http/rust
-        run: RELOCK_URL=http://127.0.0.1:8803 cargo run -q | tee out.txt && grep -q "attempt 3: get_orders(2026-03-14) ok -> confirmed" out.txt
+        run: |
+          RELOCK_URL=http://127.0.0.1:8803 cargo run -q | tee out.txt
+          grep -q "attempt 3: get_orders(2026-03-14) ok -> confirmed" out.txt
 
   docker:
     runs-on: ubuntu-latest
