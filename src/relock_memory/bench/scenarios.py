@@ -39,15 +39,29 @@ class Family:
         return {k for k, rx in self.markers.items() if re.search(rx, text, re.IGNORECASE)}
 
     def classify(self, value: str, variants: Variants) -> str:
-        norm = _norm(value)
-        for k in ("new", "old", "poison"):
-            if norm == _norm(variants[k]):
+        """Which rule the agent's value follows: ``new``, ``old``, ``poison`` or ``other``.
+
+        Formatting that doesn't change the rule is ignored: case, whitespace, ``-`` and ``_``
+        (``a;b`` follows the same separator rule as ``a; b``, ``utf8`` is ``utf-8``). A value that
+        contains exactly one rule's form, such as a whole query that quotes the table the new way,
+        counts as that rule. Values matching no rule, or more than one, are ``other``.
+        """
+        norm = _canon(value)
+        if not norm:
+            return "other"
+        forms = {k: _canon(variants[k]) for k in ("new", "old", "poison")}
+        for k, form in forms.items():
+            if norm == form:
                 return k
-        return "other"
+        inside = {k: form for k, form in forms.items() if form and form in norm}
+        # "16000m" contains both "16" and "16000": the longer form explains the shorter one.
+        kept = [k for k, form in inside.items()
+                if not any(form != other and form in other for other in inside.values())]
+        return kept[0] if len(kept) == 1 else "other"
 
 
-def _norm(v: object) -> str:
-    return re.sub(r"\s+", " ", str(v)).strip().strip("'").lower()
+def _canon(v: object) -> str:
+    return re.sub(r"[\s\-_]+", "", str(v)).strip("'").lower()
 
 
 _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",

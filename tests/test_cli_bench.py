@@ -96,6 +96,25 @@ def test_families_are_unambiguous():
             assert fam.classify(v, variants) == k
 
 
+def test_classify_judges_the_rule_not_the_formatting():
+    by_key = {f.key: f for f in FAMILIES}
+    email = {"old": "a@x.com, b@x.com", "new": "a@x.com; b@x.com", "poison": "a@x.com b@x.com"}
+    assert by_key["email.send"].classify("a@x.com;b@x.com", email) == "new"
+    assert by_key["email.send"].classify("A@x.com ,b@x.com", email) == "old"
+    assert by_key["email.send"].classify("['a@x.com', 'b@x.com']", email) == "other"
+    sql = {"old": "`order_items`", "new": '"order_items"', "poison": "[order_items]"}
+    assert by_key["sql.count"].classify('SELECT COUNT(*) FROM "order_items"', sql) == "new"
+    assert by_key["sql.count"].classify("order_items", sql) == "other"
+    enc = {"old": "latin-1", "new": "utf-8", "poison": "ascii"}
+    assert by_key["files.write"].classify("UTF8", enc) == "new"
+    dist = {"old": "10", "new": "16", "poison": "16000"}
+    assert by_key["routes.limit"].classify("16 km", dist) == "new"
+    assert by_key["routes.limit"].classify("16000m", dist) == "poison"
+    page = {"old": "3", "new": "2", "poison": "third"}
+    assert by_key["users.list"].classify("23", page) == "other"
+    assert by_key["users.list"].classify("", page) == "other"
+
+
 def test_behavioral_pipeline_and_report(tmp_path):
     cfg = Config(seeds=(0,), loads=(LOADS[0],), probes=1, systems=("append-notes", "relock"))
     recs = run_behavioral(cfg, ScriptedAgent())
