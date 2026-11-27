@@ -25,9 +25,9 @@ First public version.
   - MCP server (mcp 1.x and 2.x) with server-side trusted verifiers;
   - LangChain/LangGraph callback handler and tools.
 - Safety defaults:
-  - Agent-written text never reaches the rewriter unless the operator trusts agent reports. This
-    covers predictions stated through the toolkit or MCP, and corrections suggested to
-    `relock_verify`.
+  - Nothing the agent writes steers a rewrite unless the operator trusts agent reports. This
+    covers predictions stated through the toolkit or MCP, the clause ids they cite, and
+    corrections suggested to `relock_verify`.
   - User corrections require `authenticated=True`.
   - MCP teaching is opt-in (`--allow-teach`).
   - Toolkit-owned episodes re-lock after 30 idle minutes.
