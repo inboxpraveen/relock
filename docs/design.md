@@ -158,20 +158,22 @@ WHERE v.change_kind = 'reconsolidate' AND v.created_at > now() - interval '7 day
 | Injected text reaches the rewriter through a trusted tool's error message | Mark the signal `detail_trusted=False`. The failure counts, but its text is withheld from the rewriter. |
 | One flaky failure overwrites a good procedure | Transient classes never count; evidence threshold with inertia; flake damping by later confirmations. |
 | Fake confirmations make a poisoned item sticky | Only trusted confirmations raise confidence and inertia. |
-| Rewriter edits unrelated parts of an item | `edit_scope="cited"` locks every clause the failed prediction did not rely on. |
+| Rewriter edits unrelated parts of an item | `edit_scope="cited"` locks every clause the failed prediction did not rely on, when it cites clauses. Uncited predictions, such as `@mem.wrap` auto-expectations, leave every clause editable, so the choice falls to the rewriter. `HintRewriter` picks the clause most similar to the correction. Cite clauses when you use an LLM rewriter. |
 | Repeated rewrites collapse an item | Edits are small clause deltas (`max_ops`, `max_clause_chars`); one rewrite per item per episode. |
 | Concurrent episodes overwrite each other | Compare-and-swap on `current_version`; stale evidence becomes `CONFLICT`. |
 | A bad rewrite slips through | Full version history; `rollback` restores any version as a new version; every decision is in `relock_events`. |
-| Late edits after the context is gone | Closed episodes raise `EpisodeClosedError` on any write. |
+| Late edits after the context is gone | Closed episodes raise `EpisodeClosedError` on any write. Episodes the toolkit or MCP server opened themselves are re-locked after `idle_timeout` seconds (default 1800) without a call, so a client that never ends its task does not keep items editable. |
+| "The user said so" | `Signal.user` and `Episode.correct` default to `authenticated=False` and are blocked; the application must vouch for the user explicitly. |
 
 Not mitigated in v0.1:
 
 - An attacker who controls your tool code or verifier commands.
 - An authenticated user who gives wrong corrections. Their corrections are authoritative by
   design; use `authoritative_users=False` to put them through the evidence threshold.
-- Retrieval-time injection through item *content* written by an agent with `teach` enabled. Items
-  created by agents carry `meta.origin = "agent"` and author `agent`, and can be reviewed or
-  archived.
+- Retrieval-time injection through item *content* written by an agent. Teaching is off by
+  default in both the toolkit (`allow_teach`) and the MCP server (`--allow-teach`). When it is on,
+  agent-created items carry `meta.origin = "agent"` and author `agent`, and can be reviewed or
+  archived. They are not quarantined automatically.
 
 ## Limits and non-goals
 

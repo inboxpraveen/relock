@@ -8,12 +8,18 @@ again. relock fixes the instruction that fired, in place, but only when a **trus
 that its prediction was wrong, and only while that memory is **reactivated**.
 
 ```
-pip install relock-memory            # core: zero dependencies (SQLite + BM25 + stdlib HTTP)
-pip install "relock-memory[all]"     # + Postgres, MCP server, LangChain/LangGraph adapter
+git clone https://github.com/inboxpraveen/relock && cd relock
+pip install -e .                     # core: zero dependencies (SQLite + BM25 + stdlib HTTP)
+pip install -e ".[all]"              # + Postgres, MCP server, LangChain/LangGraph adapter
 ```
 
+Once it is published to PyPI, this becomes `pip install relock-memory` (or `"relock-memory[all]"`).
+The distribution is `relock-memory` and the import is `relock_memory`, because the PyPI name
+`relock` belongs to an unrelated SDK that also installs a top-level `relock` module.
+
 > **Status:** v0.1, alpha. The mechanism, storage, integrations and benchmark harness are
-> complete and tested. Behavioural benchmark numbers on open models are **not published yet**; see
+> complete. They are tested on Python 3.10–3.13, SQLite and Postgres, and `mcp` 1.x and 2.x.
+> Behavioural benchmark numbers on open models are **not published yet**; see
 > [RelapseBench](#relapsebench) for what has and has not been measured.
 
 ---
@@ -115,7 +121,9 @@ safe is **the model predicts, the harness judges**.
 ```
 
 Tools exposed: `relock_begin`, `relock_recall`, `relock_expect`, `relock_verify`, `relock_report`,
-`relock_teach`, `relock_history`, `relock_end`.
+`relock_history`, `relock_end`, plus `relock_teach` if you start the server with `--allow-teach`.
+Items the agent teaches are marked `meta.origin = "agent"`. If a client never calls `relock_end`,
+its episode is re-locked after 30 idle minutes (`--idle-timeout`).
 
 Because the agent calls these tools, **nothing the agent writes is trusted by default**:
 
@@ -137,8 +145,8 @@ For a single-user local sandbox, `--trust-agent-reports` opts in to all three.
 | Exception or typed result from a wrapped tool | `TOOL` | yes, if not transient |
 | `TimeoutError`, `ConnectionError`, HTTP 408/425/429/5xx | `TOOL` (transient) | **never** |
 | Test suite / schema check / grader | `VERIFIER` | yes |
-| Human correction, authenticated | `USER` | yes, immediately (authoritative) |
-| Human correction, unauthenticated | `USER` | no |
+| Human correction your app has verified (`authenticated=True`) | `USER` | yes, immediately (authoritative) |
+| Human correction without that flag (the default) | `USER` | no |
 | The model's own report | `AGENT` | no (opt-in) |
 | LLM-as-judge / self-critique | `SELF` | no |
 | Web pages, documents, emails, retrieved text | `ENVIRONMENT` | **never** |
@@ -148,7 +156,10 @@ On top of the trust gate:
 - An **evidence threshold** stops a single noisy failure from rewriting a good procedure.
 - **Inertia** means well-proven versions need more evidence: `+0.5 * ln(1 + confirmations)`.
 - **Flake damping** cancels a pending error when the same version is later confirmed.
-- **Edit scope** limits a rewrite to the clauses the failed prediction relied on.
+- **Edit scope** limits a rewrite to the clauses the failed prediction relied on, when it cites
+  them (`ep.expect(..., clauses=["c2"])`, or `clause_ids` from the agent). Automatic expectations
+  from `@mem.wrap` cite none, so there the rewriter picks the clause. `HintRewriter` replaces the
+  clause most similar to the correction.
 - **Optimistic concurrency** turns evidence about a version someone else already rewrote into a `conflict`, never a lost update.
 - A trusted tool whose error message echoes remote content can be marked `detail_trusted=False`. The failure still counts, but its text never reaches the rewriter.
 
@@ -199,15 +210,16 @@ Systems compared:
 - `append-clause`: lessons are appended to the item.
 - `ace-style`: our simplified ACE-like playbook with helpful/harmful counters (not the official ACE code).
 - Two ablations of relock: `append-gated`, which keeps relock's gates but appends, and `overwrite-ungated`, which rewrites in place with every gate off.
-- `relock` itself.
+- `relock` itself, whose predictions cite the clause they rely on.
+- `relock-uncited`: relock with uncited predictions, like the plain `@mem.wrap` path.
 
 ### Structural mode (measured, model-free)
 
 ![RelapseBench structural results](docs/results/structural.svg)
 
 This mode measures which rules reach the agent's memory context. It does not measure what a
-model does with them. It is deterministic and runs in about 20 s:
-`relock bench`. Full tables are in [docs/results/structural.md](docs/results/structural.md).
+model does with them. It is deterministic (repeated runs produce identical reports) and takes a
+few seconds: `relock bench`. Full tables are in [docs/results/structural.md](docs/results/structural.md).
 
 What it shows:
 
@@ -221,6 +233,10 @@ What it shows:
   still in context alongside the correction for 90% (`append-notes`) to 100% (`append-clause`,
   `ace-style`) of probes. At the tightest budget (L3), `append-notes` loses the correction entirely
   in 23% of probes.
+- **Citing clauses made no difference here.** `relock-uncited` matches `relock` on every metric.
+  The trust gate keeps the poisoned fix out, and the hint rewriter finds the drifting clause by
+  similarity. Edit scope guards against a rewriter, typically an LLM, that edits the wrong
+  clause. This model-free mode doesn't exercise that case.
 - **The price:** relock needs 2 trusted errors to learn a correction (its default evidence
   threshold), where append-style systems need 1. That is one extra failure per drift, paid for
   robustness against one-off noise. Set `min_evidence=1` to trade it back.
@@ -252,7 +268,7 @@ relock events --item orders.fetch # audit log: recalls, predictions, gate decisi
 relock rollback orders.fetch 1    # restores v1 as a new version (history is never destroyed)
 relock edit orders.fetch --replace c2 "Pass dates as YYYY-MM-DD."
 relock export traces.jsonl        # SFT and preference pairs from every rewrite
-relock mcp --verifier tests="pytest -q"
+relock mcp --verifier tests="pytest -q" [--allow-teach] [--trust-agent-reports]
 relock bench [--mode structural|behavioral|both]
 ```
 
@@ -313,7 +329,10 @@ python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activa
 pip install -e ".[dev]"
 pytest                                           # SQLite backends
 RELOCK_TEST_POSTGRES_URL=postgresql://... pytest # + Postgres
-ruff check src tests
+ruff check src tests examples
 ```
+
+CI runs the suite on Python 3.10–3.13 against SQLite and Postgres. It also runs the MCP tests
+on the `mcp` 1.x line.
 
 Apache-2.0. See [LICENSE](LICENSE).

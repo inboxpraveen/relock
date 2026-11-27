@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: relock
+          POSTGRES_PASSWORD: relock
+          POSTGRES_DB: relock
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U relock"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      RELOCK_TEST_POSTGRES_URL: postgresql://relock:relock@localhost:5432/relock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check src tests examples
+      - run: pytest
+      - name: examples
+        working-directory: ${{ runner.temp }}
+        run: |
+          python "$GITHUB_WORKSPACE/examples/01_quickstart.py"
+          python "$GITHUB_WORKSPACE/examples/02_llm_rewriter.py"
+          python "$GITHUB_WORKSPACE/examples/03_langgraph_callbacks.py"
+      - name: structural benchmark reproduces the published tables
+        if: matrix.python == '3.13'
+        run: |
+          relock bench --out "$RUNNER_TEMP/bench"
+          diff docs/results/structural.md "$RUNNER_TEMP/bench/structural.md"
+
+  mcp-1x:
+    name: mcp 1.x compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]" "mcp>=1.2,<2"
+      - run: python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
+      - run: pytest tests/test_integrations.py -k mcp
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install build
+      - run: python -m build
+      - name: core install has no runtime dependencies
+        run: |
+          python -m venv /tmp/core
+          /tmp/core/bin/pip install dist/*.whl
+          test "$(/tmp/core/bin/pip list --format=freeze | grep -vc '^pip==')" = "1"
+          cd /tmp && /tmp/core/bin/python -c "import relock_memory as r; print(r.__version__)"
