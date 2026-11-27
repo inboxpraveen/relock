@@ -116,6 +116,7 @@ def build_server(
     def relock_verify(expectation_id: str, verifier: str, correction: str = "") -> str:
         if verifier not in verifiers:
             return f"error: unknown verifier {verifier!r}; available: {sorted(verifiers)}"
+        ep = kit.episode()  # before the run: a long test suite must not count as idle time
         signal = run_verifier(verifiers[verifier], timeout=verifier_timeout, cwd=verifier_cwd)
         signal = signal.with_(data={**signal.data, "verifier": verifier})
         # The verifier's verdict is trusted; the agent's suggested fix is not. Attaching it to a
@@ -125,7 +126,7 @@ def build_server(
         if correction_used:
             signal = signal.with_(correction=correction)
         try:
-            obs = kit.episode().observe(expectation_id, signal=signal)
+            obs = ep.observe(expectation_id, signal=signal)
         except (RelockError, ValueError, KeyError) as e:
             return f"error: {e}"
         return json.dumps({"verifier": verifier, "passed": signal.passed, "matched": obs.matched,

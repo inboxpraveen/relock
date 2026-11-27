@@ -25,6 +25,18 @@ _id_lock = threading.Lock()
 _id_last = [0, 0]  # (ms, low bits) of the previous id
 
 
+def _reset_ids_after_fork() -> None:
+    # A forked child must not continue the parent's sequence: both would compute the same
+    # "previous + 1" within one millisecond. Fresh random low bits restore uniqueness.
+    global _id_lock
+    _id_lock = threading.Lock()
+    _id_last[0] = _id_last[1] = 0
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_ids_after_fork)
+
+
 def new_id(prefix: str) -> str:
     """Time-sortable, collision-resistant id such as ``itm_01jd3k...``.
 
