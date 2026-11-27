@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 228" width="704" height="228" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+<title id="t">Correct tool calls after a correction</title><desc id="d">Pooled over 8 models (about 480 calls per bar). Longer, noisier sessions to the right.</desc>
+<style>
+:root{--surface:#ffffff;--ink:#191919;--ink2:#666666;--grid:#e7e7e7;--axis:#c2c2c2;--accent:#257de0;--muted:#8c8c8c}
+@media (prefers-color-scheme: dark){:root{--surface:#191919;--ink:#efefef;--ink2:#9c9c9c;--grid:#303030;--axis:#474747;--accent:#338ced;--muted:#7a7a7a}}
+.bg{fill:var(--surface)} .t{fill:var(--ink);font-size:15px;font-weight:600} .s{fill:var(--ink2);font-size:12px} .p{fill:var(--ink);font-size:12px;font-weight:600} .l{fill:var(--ink);font-size:12px} .lh{fill:var(--ink);font-size:12px;font-weight:700} .v{fill:var(--ink2);font-size:11px;font-variant-numeric:tabular-nums} .vh{fill:var(--ink);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums} .g{stroke:var(--grid);stroke-width:1} .a{stroke:var(--axis);stroke-width:1} .bm{fill:var(--muted)} .bh{fill:var(--accent)} .tick{fill:var(--ink2);font-size:10px}
+</style>
+<rect class="bg" x="0" y="0" width="704" height="228" rx="8"/>
+<text class="t" x="16" y="28">Correct tool calls after a correction</text>
+<text class="s" x="16" y="48">Pooled over 8 models (about 480 calls per bar). Longer, noisier sessions to the right.</text>
+<text class="l" x="122" y="103" text-anchor="end">append-notes</text>
+<text class="l" x="122" y="127" text-anchor="end">append-clause</text>
+<text class="l" x="122" y="151" text-anchor="end">append-gated</text>
+<text class="lh" x="122" y="175" text-anchor="end">relock</text>
+<text class="p" x="132" y="70">L0: fresh session</text>
+<line class="a" x1="132.0" y1="84" x2="132.0" y2="182"/>
+<text class="tick" x="132.0" y="198" text-anchor="middle">0%</text>
+<line class="g" x1="196.0" y1="84" x2="196.0" y2="182"/>
+<text class="tick" x="196.0" y="198" text-anchor="middle">50%</text>
+<line class="g" x1="260.0" y1="84" x2="260.0" y2="182"/>
+<text class="tick" x="260.0" y="198" text-anchor="middle">100%</text>
+<g><title>append-notes - L0: fresh session: 45%</title>
+<path class="bm" d="M132,92 h53.96 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-53.96 z"/>
+<text class="v" x="195.0" y="103">45%</text></g>
+<g><title>append-clause - L0: fresh session: 5%</title>
+<path class="bm" d="M132,116 h3.11 a3.1054852320675104,3.1054852320675104 0 0 1 3.1054852320675104,3.1054852320675104 v7.789029535864979 a3.1054852320675104,3.1054852320675104 0 0 1 -3.1054852320675104,3.1054852320675104 h-3.11 z"/>
+<text class="v" x="143.2" y="127">5%</text></g>
+<g><title>append-gated - L0: fresh session: 50%</title>
+<path class="bm" d="M132,140 h60.00 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-60.00 z"/>
+<text class="v" x="201.0" y="151">50%</text></g>
+<g><title>relock - L0: fresh session: 94%</title>
+<path class="bh" d="M132,164 h116.52 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-116.52 z"/>
+<text class="vh" x="257.5" y="175">94%</text></g>
+<text class="p" x="322" y="70">L1: 1.5k-token history</text>
+<line class="a" x1="322.0" y1="84" x2="322.0" y2="182"/>
+<text class="tick" x="322.0" y="198" text-anchor="middle">0%</text>
+<line class="g" x1="386.0" y1="84" x2="386.0" y2="182"/>
+<text class="tick" x="386.0" y="198" text-anchor="middle">50%</text>
+<line class="g" x1="450.0" y1="84" x2="450.0" y2="182"/>
+<text class="tick" x="450.0" y="198" text-anchor="middle">100%</text>
+<g><title>append-notes - L1: 1.5k-token history: 49%</title>
+<path class="bm" d="M322,92 h58.92 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-58.92 z"/>
+<text class="v" x="389.9" y="103">49%</text></g>
+<g><title>append-clause - L1: 1.5k-token history: 11%</title>
+<path class="bm" d="M322,116 h9.95 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-9.95 z"/>
+<text class="v" x="341.0" y="127">11%</text></g>
+<g><title>append-gated - L1: 1.5k-token history: 51%</title>
+<path class="bm" d="M322,140 h61.23 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-61.23 z"/>
+<text class="v" x="392.2" y="151">51%</text></g>
+<g><title>relock - L1: 1.5k-token history: 99%</title>
+<path class="bh" d="M322,164 h122.37 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-122.37 z"/>
+<text class="vh" x="453.4" y="175">99%</text></g>
+<text class="p" x="512" y="70">L3: 8k-token history, tight memory</text>
+<line class="a" x1="512.0" y1="84" x2="512.0" y2="182"/>
+<text class="tick" x="512.0" y="198" text-anchor="middle">0%</text>
+<line class="g" x1="576.0" y1="84" x2="576.0" y2="182"/>
+<text class="tick" x="576.0" y="198" text-anchor="middle">50%</text>
+<line class="g" x1="640.0" y1="84" x2="640.0" y2="182"/>
+<text class="tick" x="640.0" y="198" text-anchor="middle">100%</text>
+<g><title>append-notes - L3: 8k-token history, tight memory: 60%</title>
+<path class="bm" d="M512,92 h72.20 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-72.20 z"/>
+<text class="v" x="593.2" y="103">60%</text></g>
+<g><title>append-clause - L3: 8k-token history, tight memory: 51%</title>
+<path class="bm" d="M512,116 h61.75 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-61.75 z"/>
+<text class="v" x="582.8" y="127">51%</text></g>
+<g><title>append-gated - L3: 8k-token history, tight memory: 74%</title>
+<path class="bm" d="M512,140 h90.57 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-90.57 z"/>
+<text class="v" x="611.6" y="151">74%</text></g>
+<g><title>relock - L3: 8k-token history, tight memory: 97%</title>
+<path class="bh" d="M512,164 h120.77 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-120.77 z"/>
+<text class="vh" x="641.8" y="175">97%</text></g>
+</svg>

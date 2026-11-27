@@ -125,7 +125,7 @@ class Client:
     """``Callable[[str], str]`` over OpenRouter chat completions, with usage accounting."""
 
     def __init__(self, key: str, model: str, *, tag: str, cache: Cache, meter: Meter,
-                 reasoning: dict | None, max_tokens: int) -> None:
+                 reasoning: dict | None, max_tokens: int, cheapest: bool = True) -> None:
         self._key = key
         self.model = model
         self.tag = tag
@@ -133,18 +133,23 @@ class Client:
         self.meter = meter
         self.reasoning = reasoning
         self.max_tokens = max_tokens
+        self.cheapest = cheapest
 
     def body(self, prompt: str) -> dict:
         b: dict[str, Any] = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
                              "max_tokens": self.max_tokens, "temperature": 0, "usage": {"include": True}}
         if self.reasoning is not None:
             b["reasoning"] = self.reasoning
+        if self.cheapest:
+            b["provider"] = {"sort": "price"}  # always route to the model's cheapest provider
         return b
 
     def __call__(self, prompt: str) -> str:
         self.meter.check()
         body = self.body(prompt)
-        k = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        # Routing preferences are not part of the cache key: the prompt and parameters are.
+        keyed = {k: v for k, v in body.items() if k != "provider"}
+        k = hashlib.sha256(json.dumps(keyed, sort_keys=True).encode()).hexdigest()
         hit = self.cache.get(k)
         entry: dict[str, Any] = {"tag": self.tag, "cached": hit is not None}
         if hit is None:
@@ -286,9 +291,11 @@ def unit_path(model: str, seed: int, load: str, system: str) -> Path:
 def run_unit(key: str, model: str, seed: int, load: str, system: str, args, cache: Cache, meter: Meter,
              reasoning: dict | None) -> dict:
     _tl.calls = []
+    cheapest = args.providers == "cheapest"
     agent_llm = Client(key, model, tag="agent", cache=cache, meter=meter, reasoning=reasoning,
-                       max_tokens=args.max_tokens)
-    rewrite_llm = Client(key, model, tag="rewrite", cache=cache, meter=meter, reasoning=reasoning, max_tokens=1024)
+                       max_tokens=args.max_tokens, cheapest=cheapest)
+    rewrite_llm = Client(key, model, tag="rewrite", cache=cache, meter=meter, reasoning=reasoning,
+                         max_tokens=1024, cheapest=cheapest)
     agent = RecordingAgent(agent_llm)
     rewriter = CountingRewriter(LLMRewriter(rewrite_llm))
     cfg = Config(systems=[system], loads=[LOAD_BY_NAME[load]], seeds=[seed], probes=args.probes,
@@ -377,6 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--max-tokens", type=int, default=512)
     sp.add_argument("--workers", type=int, default=24)
     sp.add_argument("--reasoning", choices=["off", "default"], default="off")
+    sp.add_argument("--providers", choices=["cheapest", "default"], default="cheapest",
+                    help="cheapest: route every call to the model's lowest-priced provider; "
+                         "default: OpenRouter's load balancing")
     args = p.parse_args(argv)
     return {"pilot": cmd_pilot, "run": cmd_run}[args.cmd](args)
 
