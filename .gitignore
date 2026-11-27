@@ -24,3 +24,8 @@ bench-results/
 .DS_Store
 Thumbs.db
 docs/results/*.json
+
+# Local secrets
+.env
+.env.*
+!.env.example
