@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 384" width="880" height="384" role="img" aria-labelledby="title desc">
+<title id="title">Same correction, two memories</title>
+<desc id="desc">The orders API now wants YYYY-MM-DD, and two real API errors correct the agent. A typical memory appends the correction as a note next to the old rule; in the next long session the agent follows the old rule and the call is rejected. relock rewrites the rule in place after the second trusted error; version 1 is kept for audit but never shown again, and the next call succeeds.</desc>
+<style>
+:root{--surface:#ffffff;--panel:#f7f8fa;--card:#ffffff;--line:#e2e4e8;--ink:#191919;--ink2:#666666;--accent:#257de0;--accent-tint:rgba(37,125,224,.08);--bad:#c93f33;--bad-tint:rgba(201,63,51,.09);--good:#1b8547;--good-tint:rgba(27,133,71,.09)}
+@media (prefers-color-scheme: dark){:root{--surface:#191919;--panel:#202124;--card:#27282c;--line:#36383d;--ink:#efefef;--ink2:#9c9c9c;--accent:#338ced;--accent-tint:rgba(51,140,237,.15);--bad:#f0685d;--bad-tint:rgba(240,104,93,.15);--good:#3dbd71;--good-tint:rgba(61,189,113,.15)}}
+text{font-family:ui-sans-serif,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:12.5px;fill:var(--ink)}
+.bg{fill:var(--surface)} .panel{fill:var(--panel);stroke:var(--line)} .row{fill:var(--card);stroke:var(--line)}
+.title{fill:var(--ink);font-size:17px;font-weight:650} .sub{fill:var(--ink2);font-size:12.5px}
+.h{fill:var(--ink);font-size:14.5px;font-weight:650} .ha{fill:var(--accent);font-size:14.5px;font-weight:700}
+.hs{fill:var(--ink2);font-size:12px} .lab{fill:var(--ink2);font-size:10px;font-weight:650;letter-spacing:.09em}
+.tag{fill:var(--ink2);font-size:11px;font-weight:650} .taga{fill:var(--accent);font-size:11px;font-weight:700}
+.v2row{fill:var(--accent-tint);stroke:var(--accent)} .badrow{fill:var(--bad-tint);stroke:var(--bad)}
+.pbad{fill:var(--bad-tint);stroke:var(--bad)} .pgood{fill:var(--good-tint);stroke:var(--good)}
+.tbad{fill:var(--bad);font-size:11.5px;font-weight:650} .tgood{fill:var(--good);font-size:11.5px;font-weight:650}
+.cap{fill:var(--ink2);font-size:12px} .strike{stroke:var(--ink2);stroke-width:1.6;fill:none}
+
+/* 12 s loop. Without animation (or with reduced motion) every element shows its final state. */
+.a08,.a12,.a18,.a21,.a30,.a44,.a52,.a60{animation:12s linear infinite}
+.a08{animation-name:k08}.a12{animation-name:k12}.a18{animation-name:k18}.a21{animation-name:k21}
+.a30{animation-name:k30}.a44{animation-name:k44}.a52{animation-name:k52}.a60{animation-name:k60}
+@keyframes k08{0%,7%{opacity:0}10%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k12{0%,11%{opacity:0}14%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k18{0%,17%{opacity:0}20%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k21{0%,20%{opacity:0}23%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k30{0%,29%{opacity:0}32%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k44{0%,43%{opacity:0}46%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k52{0%,51%{opacity:0}54%,91%{opacity:1}96%,100%{opacity:0}}
+@keyframes k60{0%,59%{opacity:0}62%,91%{opacity:1}96%,100%{opacity:0}}
+.strike{stroke-dasharray:214;animation:kstrike 12s linear infinite}
+@keyframes kstrike{0%,24%{stroke-dashoffset:214}28%,91%{stroke-dashoffset:0}96%,100%{stroke-dashoffset:214}}
+.dim{opacity:.45;animation:kdim 12s linear infinite}
+@keyframes kdim{0%,25%{opacity:1}29%,91%{opacity:.45}96%,100%{opacity:1}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important}}
+</style>
+
+<rect class="bg" x="0" y="0" width="880" height="384" rx="10"/>
+<text class="title" x="24" y="34">Same correction, two memories</text>
+<text class="sub" x="24" y="56">The orders API now wants YYYY-MM-DD. Two real API errors correct the agent. Then it works through a long session.</text>
+
+<!-- ============ typical memory ============ -->
+<rect class="panel" x="16.5" y="76.5" width="415" height="291" rx="10"/>
+<text class="h" x="34" y="104">Typical memory</text>
+<text class="hs" x="414" y="104" text-anchor="end">appends the correction as a note</text>
+
+<text class="lab" x="34" y="130">MEMORY</text>
+<rect class="row" x="34.5" y="138.5" width="379" height="29" rx="6"/>
+<rect class="badrow a52" x="34.5" y="138.5" width="379" height="29" rx="6"/>
+<text class="tag" x="46" y="157">rule</text>
+<text class="mono" x="84" y="157">Pass the date as MM/DD/YYYY.</text>
+<text class="tbad a52" x="402" y="157" text-anchor="end">followed</text>
+<g class="a12">
+  <rect class="row" x="34.5" y="174.5" width="379" height="29" rx="6"/>
+  <text class="tag" x="46" y="193">note</text>
+  <text class="mono" x="84" y="193">The API wants YYYY-MM-DD now.</text>
+</g>
+
+<text class="lab" x="34" y="230">TOOL ERRORS</text>
+<g class="a08"><rect class="pbad" x="34.5" y="238.5" width="131" height="23" rx="11.5"/><text class="tbad" x="100" y="254" text-anchor="middle">422 invalid date</text></g>
+<g class="a18"><rect class="pbad" x="174.5" y="238.5" width="131" height="23" rx="11.5"/><text class="tbad" x="240" y="254" text-anchor="middle">422 invalid date</text></g>
+
+<text class="lab" x="34" y="288">NEXT LONG SESSION</text>
+<g class="a44">
+  <rect class="row" x="34.5" y="296.5" width="379" height="29" rx="6"/>
+  <text class="mono" x="46" y="315">get_orders("03/14/2026")</text>
+</g>
+<g class="a52"><rect class="pbad" x="306.5" y="299.5" width="99" height="23" rx="11.5"/><text class="tbad" x="356" y="315" text-anchor="middle">422 rejected</text></g>
+<text class="cap a60" x="34" y="352">Both rules stay in memory. The model can follow either.</text>
+
+<!-- ============ relock ============ -->
+<rect class="panel" x="448.5" y="76.5" width="415" height="291" rx="10"/>
+<text class="ha" x="466" y="104">relock</text>
+<text class="hs" x="846" y="104" text-anchor="end">rewrites the rule that fired</text>
+
+<text class="lab" x="466" y="130">MEMORY</text>
+<rect class="row" x="466.5" y="138.5" width="379" height="29" rx="6"/>
+<g class="dim">
+  <text class="tag" x="478" y="157">v1</text>
+  <text class="mono" x="516" y="157" textLength="210" lengthAdjust="spacingAndGlyphs">Pass the date as MM/DD/YYYY.</text>
+</g>
+<line class="strike" x1="514" y1="153.5" x2="728" y2="153.5"/>
+<text class="tag a30" x="834" y="157" text-anchor="end">superseded</text>
+<g class="a30">
+  <rect class="v2row" x="466.5" y="174.5" width="379" height="29" rx="6"/>
+  <text class="taga" x="478" y="193">v2</text>
+  <text class="mono" x="516" y="193">Pass the date as YYYY-MM-DD.</text>
+</g>
+<text class="tgood a52" x="834" y="193" text-anchor="end">followed</text>
+
+<text class="lab" x="466" y="230">TOOL ERRORS</text>
+<g class="a08"><rect class="pbad" x="466.5" y="238.5" width="131" height="23" rx="11.5"/><text class="tbad" x="532" y="254" text-anchor="middle">422 invalid date</text></g>
+<g class="a18"><rect class="pbad" x="606.5" y="238.5" width="131" height="23" rx="11.5"/><text class="tbad" x="672" y="254" text-anchor="middle">422 invalid date</text></g>
+<text class="hs a21" x="750" y="254">2 of 2: rewrite</text>
+
+<text class="lab" x="466" y="288">NEXT LONG SESSION</text>
+<g class="a44">
+  <rect class="row" x="466.5" y="296.5" width="379" height="29" rx="6"/>
+  <text class="mono" x="478" y="315">get_orders("2026-03-14")</text>
+</g>
+<g class="a52"><rect class="pgood" x="738.5" y="299.5" width="99" height="23" rx="11.5"/><text class="tgood" x="788" y="315" text-anchor="middle">200 OK</text></g>
+<text class="cap a60" x="466" y="352">One active rule. v1 is kept for audit, never shown again.</text>
+</svg>

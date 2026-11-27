@@ -1,16 +1,25 @@
-# relock
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="relock" width="252" height="64">
+</p>
 
-[![ci](https://github.com/inboxpraveen/relock/actions/workflows/ci.yml/badge.svg)](https://github.com/inboxpraveen/relock/actions/workflows/ci.yml)
-[![pypi](https://img.shields.io/pypi/v/relock-memory)](https://pypi.org/project/relock-memory/)
-[![python](https://img.shields.io/pypi/pyversions/relock-memory)](https://pypi.org/project/relock-memory/)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+<p align="center">
+  <strong>Agent memory that fixes the rule that fired, in place and only on trusted evidence,<br>
+  so corrected mistakes don't come back.</strong>
+</p>
 
-**Agent memory that fixes the rule that fired, in place and only on trusted evidence, so
-corrected mistakes don't come back.**
+<p align="center">
+  <a href="https://github.com/inboxpraveen/relock/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/inboxpraveen/relock/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://pypi.org/project/relock-memory/"><img alt="pypi" src="https://img.shields.io/pypi/v/relock-memory"></a>
+  <a href="https://pypi.org/project/relock-memory/"><img alt="python" src="https://img.shields.io/pypi/pyversions/relock-memory"></a>
+  <a href="https://github.com/inboxpraveen/relock/pkgs/container/relock"><img alt="docker" src="https://img.shields.io/badge/docker-ghcr.io%2Finboxpraveen%2Frelock-blue"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+</p>
 
 You corrected your agent: the orders API takes ISO dates now. Its memory saved the lesson as a
 note. Days later, deep into a long session, it sends `03/14/2026` again. The old rule was still in
 memory, next to the note, and the model followed it.
+
+![Same correction, two memories: a typical memory appends a note and the agent repeats the mistake; relock rewrites the rule and the next call succeeds](docs/assets/hero.svg)
 
 Lesson notes, rules files and playbooks all keep both rules and hope the model picks the right
 one. relock edits the rule that fired, in place, under three conditions:
@@ -88,22 +97,18 @@ The extras install one at a time too: `[postgres]`, `[mcp]`, `[langchain]`. The 
 
 Unlock on recall, rewrite on surprise, re-lock.
 
-relock borrows the *shape* of memory reconsolidation from neuroscience (a recalled memory becomes
-briefly editable, and prediction error drives the update). It is a metaphor for an engineering
-discipline, not a biological claim. The neuroscience is mostly animal work, and human results are mixed.
+![The lifecycle of a memory: locked, recalled and editable, through a trust gate, evidence, rewritten in place, re-locked](docs/assets/lifecycle.svg)
 
-```mermaid
-flowchart LR
-    L["locked<br/>(stored, read-only)"] -- "recall / use<br/>(retrieval trace)" --> B["labile<br/>(editable in this episode)"]
-    B -- "expect()<br/>structured prediction" --> P{"observe()<br/>outcome vs prediction"}
-    P -- "match + trusted" --> C["confidence up"]
-    P -- "mismatch, untrusted<br/>or transient" --> X["logged, blocked"]
-    P -- "mismatch + trusted" --> E["evidence +1"]
-    E -- "evidence >= threshold" --> R["rewrite clause in place<br/>old version superseded"]
-    C --> B
-    R --> B
-    B -- "episode closes" --> L
-```
+The idea comes from **memory reconsolidation** in neuroscience:
+- [Nader, Schafe and LeDoux (2000)](https://doi.org/10.1038/35021052) showed in rats that a fear
+  memory becomes editable again for a short window after it is recalled.
+- [Sevenster, Beckers and Kindt (2013)](https://doi.org/10.1126/science.1231966) found, in people,
+  that the update needs a prediction error: the memory changes only when what happened differs from
+  what it predicted.
+
+relock borrows that shape: a memory can change only while it is recalled, and only when an outcome
+contradicts what it predicted. It is a design metaphor, not a biological claim. The evidence comes
+mostly from animal work, and results in people are mixed.
 
 1. **Reactivation = retrieval.** Only items recalled in the current episode can be edited. The
    retrieval trace answers "which memory caused this?" structurally, so the model never has to.
@@ -158,6 +163,8 @@ v2 [active] reconsolidate by hint at 2026-11-26T18:38:29.463781+00:00 (episode e
 Run [`examples/01_quickstart.py`](examples/01_quickstart.py) to see the whole loop in about 60 lines.
 
 ## Plug it into your stack
+
+![Where relock sits: beside your agent. Recall feeds the prompt; real tool outcomes pass a trust gate; trusted evidence rewrites the clause that fired; every version is stored](docs/assets/architecture.svg)
 
 relock does not replace your agent framework. It sits beside it. The split that keeps memory
 safe is **the model predicts, the harness judges**.

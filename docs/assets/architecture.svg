@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 410" width="880" height="410" role="img" aria-labelledby="title desc">
+<title id="title">Where relock sits</title>
+<desc id="desc">relock sits beside your agent. It recalls matching rules into the model's prompt. The real outcomes of tool calls and tests pass its trust gate; only tool errors, tests and verified users count, while the model's claims, web pages and timeouts are logged only. Trusted evidence rewrites the clause that fired, and every version is kept in SQLite or Postgres. It plugs in as a Python decorator, a LangChain or LangGraph callback, an MCP server, or an HTTP API with a Docker image for any language.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+  <marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-ink" d="M0 0 10 5 0 10z"/></marker>
+</defs>
+<style>
+:root{--surface:#ffffff;--panel:#f7f8fa;--card:#ffffff;--line:#e2e4e8;--ink:#191919;--ink2:#666666;--muted:#9a9a9a;--accent:#257de0;--accent-tint:rgba(37,125,224,.06)}
+@media (prefers-color-scheme: dark){:root{--surface:#191919;--panel:#202124;--card:#27282c;--line:#36383d;--ink:#efefef;--ink2:#9c9c9c;--muted:#6f6f6f;--accent:#338ced;--accent-tint:rgba(51,140,237,.10)}}
+text{font-family:ui-sans-serif,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+.bg{fill:var(--surface)} .box{fill:var(--panel);stroke:var(--line)} .rbox{fill:var(--card);stroke:var(--line)}
+.col{fill:var(--accent-tint);stroke:var(--accent);stroke-opacity:.55}
+.title{fill:var(--ink);font-size:17px;font-weight:650} .sub{fill:var(--ink2);font-size:12.5px}
+.lab{fill:var(--ink2);font-size:10px;font-weight:650;letter-spacing:.09em} .laba{fill:var(--accent);font-size:10px;font-weight:700;letter-spacing:.09em}
+.bt{fill:var(--ink);font-size:13.5px;font-weight:650} .bs{fill:var(--ink2);font-size:11.5px} .bm{fill:var(--muted);font-size:11.5px}
+.el{fill:var(--ink2);font-size:11.5px}
+.head{fill:var(--accent)} .head-ink{fill:var(--ink2)}
+.wire{fill:none;stroke:var(--accent);stroke-width:1.8} .wire-ink{fill:none;stroke:var(--ink2);stroke-width:1.4}
+.chip{fill:var(--panel);stroke:var(--line)} .ct{fill:var(--ink);font-size:12px}
+</style>
+
+<rect class="bg" x="0" y="0" width="880" height="410" rx="10"/>
+<text class="title" x="24" y="34">Where relock sits</text>
+<text class="sub" x="24" y="56">Beside your agent, not inside it. The model reads memory; only real outcomes can change it.</text>
+
+<!-- your agent -->
+<text class="lab" x="24" y="94">YOUR AGENT</text>
+<rect class="box" x="24.5" y="106.5" width="265" height="59" rx="10"/>
+<text class="bt" x="42" y="131">Model</text>
+<text class="bs" x="42" y="150">reads the recalled rules, picks the call</text>
+<rect class="box" x="24.5" y="238.5" width="265" height="59" rx="10"/>
+<text class="bt" x="42" y="263">Tools and tests</text>
+<text class="bs" x="42" y="282">the real outcome of each call</text>
+<path class="wire-ink" d="M157 167V235" marker-end="url(#arrow-ink)"/>
+<text class="el" x="165" y="206">tool call</text>
+
+<!-- relock -->
+<rect class="col" x="370.5" y="78.5" width="279" height="257" rx="12"/>
+<text class="laba" x="388" y="98">RELOCK</text>
+<rect class="rbox" x="386.5" y="108.5" width="247" height="41" rx="8"/>
+<text class="bt" x="400" y="125">Recall</text>
+<text class="bs" x="400" y="141">rules into the prompt; now editable</text>
+<rect class="rbox" x="386.5" y="158.5" width="247" height="59" rx="8"/>
+<text class="bt" x="400" y="175">Trust gate</text>
+<text class="bs" x="400" y="192">counts: tool errors, tests, verified users</text>
+<text class="bm" x="400" y="208">logged only: model claims, web pages, 5xx</text>
+<rect class="rbox" x="386.5" y="226.5" width="247" height="41" rx="8"/>
+<text class="bt" x="400" y="243">Rewrite in place</text>
+<text class="bs" x="400" y="259">only the clause that fired</text>
+<rect class="rbox" x="386.5" y="276.5" width="247" height="41" rx="8"/>
+<text class="bt" x="400" y="293">Version history</text>
+<text class="bs" x="400" y="309">every version and decision; rollback</text>
+
+<!-- storage -->
+<text class="lab" x="700" y="260">STORAGE</text>
+<rect class="box" x="700.5" y="268.5" width="155" height="59" rx="10"/>
+<text class="bt" x="716" y="293">SQLite or Postgres</text>
+<text class="bs" x="716" y="312">versions, events, audit</text>
+
+<!-- wires -->
+<path class="wire" d="M384 128H293" marker-end="url(#arrow)"/>
+<text class="el" x="338" y="121" text-anchor="middle">context</text>
+<path class="wire" d="M292 268H331V188H383" marker-end="url(#arrow)"/>
+<text class="el" x="324" y="232" text-anchor="end">outcomes</text>
+<path class="wire" d="M636 297H697" marker-end="url(#arrow)"/>
+
+<!-- integration surfaces -->
+<text class="lab" x="24" y="374">PLUG IN AS</text>
+<rect class="chip" x="104.5" y="357.5" width="133" height="27" rx="13.5"/>
+<text class="ct" x="171" y="375" text-anchor="middle">Python decorator</text>
+<rect class="chip" x="245.5" y="357.5" width="171" height="27" rx="13.5"/>
+<text class="ct" x="331" y="375" text-anchor="middle">LangChain / LangGraph</text>
+<rect class="chip" x="424.5" y="357.5" width="97" height="27" rx="13.5"/>
+<text class="ct" x="473" y="375" text-anchor="middle">MCP server</text>
+<rect class="chip" x="529.5" y="357.5" width="326" height="27" rx="13.5"/>
+<text class="ct" x="692" y="375" text-anchor="middle">HTTP API + Docker: Rust, TypeScript, Go, Java</text>
+</svg>

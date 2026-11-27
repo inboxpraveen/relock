@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 2026-11-28
+
+Documentation only; no code changes.
+
+- A logo, and an animated diagram of the core idea: the same correction in a typical memory and
+  in relock.
+- Diagrams of a memory's lifecycle (replacing the Mermaid chart, which PyPI can't render) and of
+  where relock sits beside an agent.
+- Citations for the neuroscience the design borrows from.
+- A social preview card for links to the repository.
+
 ## 0.2.0 - 2026-11-28
 
 Behavioural results on 8 hosted models, use from any language over HTTP, and a container image.

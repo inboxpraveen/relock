@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="t">
+<title id="t">relock: agent memory that fixes the rule that fired, in place and only on trusted evidence</title>
+<!-- Social preview card (GitHub, LinkedIn, X). Fixed colours: it is rendered to docs/assets/social.png. -->
+<style>
+text{font-family:'Segoe UI',ui-sans-serif,-apple-system,Roboto,'Helvetica Neue',Arial,sans-serif}
+.mono{font-family:Consolas,ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+<rect width="1280" height="640" fill="#121316"/>
+<rect x="0" y="0" width="1280" height="6" fill="#338ced"/>
+
+<g transform="translate(80 86) scale(1.5)">
+  <path d="M18 27V19a12 12 0 0 1 24 0v3.5" fill="none" stroke="#338ced" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M37.6 19.6 42 24.2l4.4-4.6" fill="none" stroke="#338ced" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path fill="#338ced" fill-rule="evenodd" d="M17 27h26a7 7 0 0 1 7 7v15a7 7 0 0 1-7 7H17a7 7 0 0 1-7-7V34a7 7 0 0 1 7-7Zm13 7.6a4.4 4.4 0 0 0-2.3 8.15L27 48.6h6l-.7-5.85A4.4 4.4 0 0 0 30 34.6Z"/>
+</g>
+<text x="186" y="164" fill="#f3f4f6" font-size="76" font-weight="700" letter-spacing="-1.5">relock</text>
+
+<text x="80" y="262" fill="#e4e6ea" font-size="42" font-weight="600" letter-spacing="-.4">Agent memory that fixes the rule that fired,</text>
+<text x="80" y="316" fill="#e4e6ea" font-size="42" font-weight="600" letter-spacing="-.4">in place and only on trusted evidence.</text>
+
+<text x="80" y="398" fill="#9aa0a8" font-size="22">Correct tool calls after a correction, 8 models, long sessions</text>
+<!-- 0..100% maps to x 80..1200 -->
+<line x1="80" y1="450" x2="1200" y2="450" stroke="#2c2f35" stroke-width="2"/>
+<line x1="752" y1="450" x2="1177.6" y2="450" stroke="#4a4f57" stroke-width="4" stroke-linecap="round"/>
+<circle cx="752" cy="450" r="12" fill="#8a8f97" stroke="#121316" stroke-width="4"/>
+<circle cx="1177.6" cy="450" r="14" fill="#338ced" stroke="#121316" stroke-width="4"/>
+<text x="752" y="494" fill="#9aa0a8" font-size="22" text-anchor="middle">60% usual memory</text>
+<text x="1177.6" y="494" fill="#338ced" font-size="22" font-weight="700" text-anchor="end">98% relock</text>
+
+<text class="mono" x="80" y="578" fill="#e4e6ea" font-size="26">pip install relock-memory</text>
+<text x="1200" y="578" fill="#9aa0a8" font-size="24" text-anchor="end">Python · MCP · HTTP for any language</text>
+</svg>
