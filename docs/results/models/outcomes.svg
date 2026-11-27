@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 228" width="704" height="228" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
-<title id="t">What the agent did after being corrected</title><desc id="d">Pooled over 8 models and all loads (about 1,440 calls per bar).</desc>
+<title id="t">What the agent did after being corrected</title><desc id="d">Pooled over 8 models and all loads (about 2,869 calls per bar).</desc>
 <style>
 :root{--surface:#ffffff;--ink:#191919;--ink2:#666666;--grid:#e7e7e7;--axis:#c2c2c2;--accent:#257de0;--muted:#8c8c8c}
 @media (prefers-color-scheme: dark){:root{--surface:#191919;--ink:#efefef;--ink2:#9c9c9c;--grid:#303030;--axis:#474747;--accent:#338ced;--muted:#7a7a7a}}
@@ -7,7 +7,7 @@
 </style>
 <rect class="bg" x="0" y="0" width="704" height="228" rx="8"/>
 <text class="t" x="16" y="28">What the agent did after being corrected</text>
-<text class="s" x="16" y="48">Pooled over 8 models and all loads (about 1,440 calls per bar).</text>
+<text class="s" x="16" y="48">Pooled over 8 models and all loads (about 2,869 calls per bar).</text>
 <text class="l" x="122" y="103" text-anchor="end">append-notes</text>
 <text class="l" x="122" y="127" text-anchor="end">append-clause</text>
 <text class="l" x="122" y="151" text-anchor="end">append-gated</text>
@@ -19,18 +19,18 @@
 <text class="tick" x="196.0" y="198" text-anchor="middle">50%</text>
 <line class="g" x1="260.0" y1="84" x2="260.0" y2="182"/>
 <text class="tick" x="260.0" y="198" text-anchor="middle">100%</text>
-<g><title>append-notes - Correct call: 51%</title>
-<path class="bm" d="M132,92 h61.67 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-61.67 z"/>
-<text class="v" x="202.7" y="103">51%</text></g>
-<g><title>append-clause - Correct call: 22%</title>
-<path class="bm" d="M132,116 h24.63 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-24.63 z"/>
-<text class="v" x="165.6" y="127">22%</text></g>
-<g><title>append-gated - Correct call: 58%</title>
-<path class="bm" d="M132,140 h70.58 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-70.58 z"/>
-<text class="v" x="211.6" y="151">58%</text></g>
+<g><title>append-notes - Correct call: 49%</title>
+<path class="bm" d="M132,92 h59.29 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-59.29 z"/>
+<text class="v" x="200.3" y="103">49%</text></g>
+<g><title>append-clause - Correct call: 19%</title>
+<path class="bm" d="M132,116 h20.94 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-20.94 z"/>
+<text class="v" x="161.9" y="127">19%</text></g>
+<g><title>append-gated - Correct call: 56%</title>
+<path class="bm" d="M132,140 h67.97 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-67.97 z"/>
+<text class="v" x="209.0" y="151">56%</text></g>
 <g><title>relock - Correct call: 97%</title>
-<path class="bh" d="M132,164 h119.87 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-119.87 z"/>
-<text class="vh" x="260.9" y="175">97%</text></g>
+<path class="bh" d="M132,164 h120.43 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-120.43 z"/>
+<text class="vh" x="261.4" y="175">97%</text></g>
 <text class="p" x="322" y="70">Relapsed to the old rule</text>
 <line class="a" x1="322.0" y1="84" x2="322.0" y2="182"/>
 <text class="tick" x="322.0" y="198" text-anchor="middle">0%</text>
@@ -39,14 +39,14 @@
 <line class="g" x1="450.0" y1="84" x2="450.0" y2="182"/>
 <text class="tick" x="450.0" y="198" text-anchor="middle">100%</text>
 <g><title>append-notes - Relapsed to the old rule: 22%</title>
-<path class="bm" d="M322,92 h23.74 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-23.74 z"/>
-<text class="v" x="354.7" y="103">22%</text></g>
-<g><title>append-clause - Relapsed to the old rule: 11%</title>
-<path class="bm" d="M322,116 h9.73 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-9.73 z"/>
-<text class="v" x="340.7" y="127">11%</text></g>
-<g><title>append-gated - Relapsed to the old rule: 37%</title>
-<path class="bm" d="M322,140 h43.10 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-43.10 z"/>
-<text class="v" x="374.1" y="151">37%</text></g>
+<path class="bm" d="M322,92 h24.43 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-24.43 z"/>
+<text class="v" x="355.4" y="103">22%</text></g>
+<g><title>append-clause - Relapsed to the old rule: 9%</title>
+<path class="bm" d="M322,116 h7.45 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-7.45 z"/>
+<text class="v" x="338.4" y="127">9%</text></g>
+<g><title>append-gated - Relapsed to the old rule: 38%</title>
+<path class="bm" d="M322,140 h44.21 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-44.21 z"/>
+<text class="v" x="375.2" y="151">38%</text></g>
 <g><title>relock - Relapsed to the old rule: 0%</title>
 <text class="vh" x="327.0" y="175">0%</text></g>
 <text class="p" x="512" y="70">Followed the poisoned rule</text>
@@ -56,15 +56,15 @@
 <text class="tick" x="576.0" y="198" text-anchor="middle">50%</text>
 <line class="g" x1="640.0" y1="84" x2="640.0" y2="182"/>
 <text class="tick" x="640.0" y="198" text-anchor="middle">100%</text>
-<g><title>append-notes - Followed the poisoned rule: 24%</title>
-<path class="bm" d="M512,92 h26.09 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-26.09 z"/>
-<text class="v" x="547.1" y="103">24%</text></g>
-<g><title>append-clause - Followed the poisoned rule: 64%</title>
-<path class="bm" d="M512,116 h78.40 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-78.40 z"/>
-<text class="v" x="599.4" y="127">64%</text></g>
-<g><title>append-gated - Followed the poisoned rule: 1%</title>
-<path class="bm" d="M512,140 h0.86 a0.8587570621468926,0.8587570621468926 0 0 1 0.8587570621468926,0.8587570621468926 v12.282485875706215 a0.8587570621468926,0.8587570621468926 0 0 1 -0.8587570621468926,0.8587570621468926 h-0.86 z"/>
-<text class="v" x="518.7" y="151">1%</text></g>
+<g><title>append-notes - Followed the poisoned rule: 25%</title>
+<path class="bm" d="M512,92 h27.47 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-27.47 z"/>
+<text class="v" x="548.5" y="103">25%</text></g>
+<g><title>append-clause - Followed the poisoned rule: 68%</title>
+<path class="bm" d="M512,116 h82.62 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-82.62 z"/>
+<text class="v" x="603.6" y="127">68%</text></g>
+<g><title>append-gated - Followed the poisoned rule: 2%</title>
+<path class="bm" d="M512,140 h1.21 a1.206282722513089,1.206282722513089 0 0 1 1.206282722513089,1.206282722513089 v11.587434554973822 a1.206282722513089,1.206282722513089 0 0 1 -1.206282722513089,1.206282722513089 h-1.21 z"/>
+<text class="v" x="519.4" y="151">2%</text></g>
 <g><title>relock - Followed the poisoned rule: 0%</title>
-<text class="vh" x="517.4" y="175">0%</text></g>
+<text class="vh" x="517.5" y="175">0%</text></g>
 </svg>

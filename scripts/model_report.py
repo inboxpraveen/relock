@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import textwrap
 import urllib.request
 from collections import defaultdict
 from html import escape
@@ -109,9 +110,10 @@ def summarise(units: list[dict]) -> dict[str, Any]:
     table = {f"{m}|{s}|{ld}": outcome_cells(ps) for (m, s, ld), ps in probes.items()}
     fam: dict[str, dict[str, Any]] = {}
     for f in FAMILIES:
-        for s in ("append-notes", "relock"):
+        for s in SYSTEMS:
             ps = [p for p in probes[("all", s, "L3")] if p["family"] == f.key and not p["api_error"]]
-            fam.setdefault(f.key, {})[s] = cell(sum(p["outcome"] == "new" for p in ps), len(ps))
+            fam.setdefault(f.key, {})[s] = {label: cell(sum(p["outcome"] == o for p in ps), len(ps))
+                                            for o, label in OUTCOMES}
     learning = {}
     for (m, s), xs in learn.items():
         learning[f"{m}|{s}"] = {"mean_errors": round(sum(e for e, _ in xs) / len(xs), 3),
@@ -156,17 +158,17 @@ def dumbbell(summary: dict[str, Any], load: str) -> str:
         "</style>",
         f'<rect class="bg" x="0" y="0" width="{width}" height="{height}" rx="8"/>',
         f'<text class="t" x="16" y="28">{escape(title)}</text>',
-        f'<text class="s" x="16" y="48">{escape(sub[:96])}</text>',
-        f'<text class="s" x="16" y="64">{escape(sub[96:].strip())}</text>',
     ]
+    for i, line in enumerate(textwrap.wrap(sub, 100)[:2]):
+        out.append(f'<text class="s" x="16" y="{48 + 16 * i}">{escape(line)}</text>')
     ly = 86
     legend = [("base", "append-notes (usual memory)"), ("gate", "append-gated (relock's gates, still appending)"),
               ("rl", "relock")]
-    lx = label_w
+    lx = 16
     for cls, text in legend:
         out.append(f'<circle class="{cls}" cx="{lx + 6}" cy="{ly - 4}" r="5"/>')
         out.append(f'<text class="l" x="{lx + 16}" y="{ly}">{escape(text)}</text>')
-        lx += 16 + 7 * len(text) + 18
+        lx += 16 + round(6.4 * len(text)) + 22
     bottom = top + row_h * len(rows)
     for frac in (0, 0.25, 0.5, 0.75, 1.0):
         gx = x(frac)
@@ -201,7 +203,8 @@ def ci(c: dict[str, Any]) -> str:
     return f"{pct(c['rate'])} ({pct(c['ci'][0])}–{pct(c['ci'][1])})"  # noqa: RUF001
 
 
-def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | None, units: list[dict]) -> str:
+def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | None, units: list[dict],
+                   key_spend: float | None = None) -> str:
     o = s["outcomes"]
     L = lambda m, sy, ld, k="correct": o[f"{m}|{sy}|{ld}"][k]  # noqa: E731
     an3, rl3 = L("all", "append-notes", "L3"), L("all", "relock", "L3")
@@ -283,14 +286,23 @@ def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | N
     w("")
     w("## Where it bites")
     w("")
-    w("This table pools the long-session (`L3`) calls across all models. The consequence column is our")
-    w("description of what the wrong call would do; it was not measured.")
+    w("This table pools the long-session (`L3`) calls across all models. It shows the correct-call rate")
+    w("and how append-notes went wrong: relapsed to the old rule, or followed the poisoned \"fix\".")
+    w("The last column is our description of what the old rule does; it was not measured.")
     w("")
-    w("| task | append-notes | relock | what a wrong call does |")
-    w("|---|---|---|---|")
+    w("| task | append-notes | its relapses / poisoned | relock | what the old rule does |")
+    w("|---|---|---|---|---|")
     for f in FAMILIES:
         c = s["families"][f.key]
-        w(f"| `{f.key}` | {pct(c['append-notes']['rate'])} | {pct(c['relock']['rate'])} | {CONSEQUENCE[f.key]} |")
+        an, rl = c["append-notes"], c["relock"]
+        w(f"| `{f.key}` | {pct(an['correct']['rate'])} | {pct(an['relapse']['rate'])} / "
+          f"{pct(an['poisoned']['rate'])} | {pct(rl['correct']['rate'])} | {CONSEQUENCE[f.key]} |")
+    w("")
+    worst = sorted(FAMILIES, key=lambda f: s["families"][f.key]["append-notes"]["correct"]["rate"])[:2]
+    w(f"On `{worst[0].key}` and `{worst[1].key}`, a flaky check's wrong \"fix\" went into append-notes'")
+    w("memory, and the models followed it even in fresh sessions. The trust gate keeps that fix out of")
+    w("memory. relock and append-gated still meet the poisoned value in the injected page of a long")
+    w("session's context, but follow it far less often.")
     w("")
     w("## What it costs and what it saves")
     w("")
@@ -326,31 +338,54 @@ def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | N
     w("  relock keeps one current rule instead of a growing pile of notes, so the fix adds no prompt")
     w("  cost.")
     w(f"- **Per 1,000 calls in long sessions:** about {wrong_an - wrong_rl:.0f} fewer wrong calls than")
-    w("  append-notes. Each one is a failed request, a retry, or, for the silent cases above, a wrong")
-    w("  charge, region or file.")
+    w("  append-notes. Each one is a failed request and a retry or, in the silent cases above, a")
+    w("  wrong charge, a skipped page or a corrupted file.")
     w("")
     w("## Cost of this study")
     w("")
+    probe_paid = sum(sum(p["cost"] for p in u["probes"]) for u in units)
     paid = sum(sum(p["cost"] for p in u["probes"]) + u["learn_cost"] + u["rewrite_cost"] for u in units)
-    w(f"- **Recorded spend:** ${paid:.2f} for {sum(len(u['probes']) for u in units):,} probe calls, plus")
-    w(f"  learning and rewrite calls, across {len(s['models'])} models. The first run (seeds 0-1) used")
-    w("  OpenRouter's default provider routing; the extension used each model's cheapest provider.")
+    w(f"- **Calls in `records.csv`:** {sum(len(u['probes']) for u in units):,} probe calls across "
+      f"{len(s['models'])} models, plus the")
+    w(f"  learning and rewrite calls. Priced call by call they come to ${paid:.2f}, of which probes")
+    w(f"  were ${probe_paid:.2f}. Identical prompts were answered from a local cache, so the real cost")
+    w("  was lower.")
+    if key_spend is not None:
+        w(f"- **Actual spend:** ${key_spend:.2f} on the OpenRouter key, including pilots and the re-run of")
+        w("  failed calls.")
+    w("- **Routing:** the first run (seeds 0-1) used OpenRouter's default provider routing. The")
+    w("  extension used each model's cheapest provider, which `scripts/model_study.py` now does by")
+    w("  default.")
     if prices:
         tok = defaultdict(lambda: [0, 0])
         for u in units:
             for p in u["probes"]:
                 tok[u["model"]][0] += p["prompt_tokens"]
                 tok[u["model"]][1] += p["completion_tokens"]
-        cheap = sum(i * prices[m][0] + c * prices[m][1] for m, (i, c) in tok.items() if m in prices)
-        probe_paid = sum(sum(p["cost"] for p in u["probes"]) for u in units)
-        w(f"- **Reproduction:** the probe calls cost ${probe_paid:.2f} here and would cost about")
-        w(f"  ${cheap:.2f} at each model's cheapest provider. `scripts/model_study.py` now routes there")
-        w("  by default.")
+        listed = sum(i * prices[m][0] + c * prices[m][1] for m, (i, c) in tok.items() if m in prices)
+        w(f"- **Reproduction:** the same probe calls cost about ${listed:.2f} at each model's listed")
+        w("  OpenRouter price.")
     w("")
     w("## Caveats")
     w("")
     excluded = sum(s["api_errors"].values())
-    w(f"- **API errors:** {excluded} calls failed at the API after retries, all on `openai/gpt-6-luna`.")
+    errs = {m: n for m, n in s["api_errors"].items() if n}
+    fam_err: dict[str, int] = defaultdict(int)
+    for u in units:
+        for p in u["probes"]:
+            if p["api_error"]:
+                fam_err[p["family"]] += 1
+    top_fam, top_n = max(fam_err.items(), key=lambda kv: kv[1]) if fam_err else ("", 0)
+    probe_errors = sum(fam_err.values())
+    if len(errs) == 1:
+        w(f"- **API errors:** {excluded} calls failed at the API after retries, all on `{next(iter(errs))}`.")
+    else:
+        w(f"- **API errors:** {excluded} calls failed at the API after retries: "
+          + ", ".join(f"`{m}` ({n})" for m, n in errs.items()) + ".")
+    if probe_errors:
+        w(f"  Of the {probe_errors} failed probe calls, {top_n} were on `{top_fam}`. A fresh call reproduced")
+        w("  the cause: an HTTP 400 from the upstream provider's usage-policy filter, not a network")
+        w("  failure.")
     w("  Failed probes are excluded from the rates above. A failure during learning counted as a wrong")
     w("  answer for every memory system alike.")
     w("- **Refusals:** `gpt-6-luna` sometimes declines the payment task (\"can't charge without looking up")
@@ -365,7 +400,7 @@ def build_markdown(s: dict[str, Any], prices: dict[str, tuple[float, float]] | N
     w("")
     w("```")
     w("pip install -e .")
-    w("OPENROUTER_API_KEY=... python scripts/model_study.py run --budget 5")
+    w("OPENROUTER_API_KEY=... python scripts/model_study.py run --seeds 0 1 2 --loads L0 L1 L2 L3")
     w("python scripts/model_report.py --prices")
     w("```")
     return "\n".join(lines) + "\n"
@@ -379,6 +414,7 @@ def fetch_prices() -> dict[str, tuple[float, float]]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="model_report")
     ap.add_argument("--prices", action="store_true", help="fetch OpenRouter list prices for the cost section")
+    ap.add_argument("--key-spend", type=float, help="actual USD spent on the key (from /api/v1/key), to report")
     args = ap.parse_args(argv)
     units = load_units()
     s = summarise(units)
@@ -412,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
         "What the agent did after being corrected", f"Pooled over {len(s['models'])} models and all loads "
         f"(about {o['all|relock|all']['correct']['n']:,} calls per bar).", outcome_panels, SYSTEMS) + "\n", encoding="utf-8", newline="\n")
     prices = fetch_prices() if args.prices else None
-    (OUT / "README.md").write_text(build_markdown(s, prices, units), encoding="utf-8", newline="\n")
+    (OUT / "README.md").write_text(build_markdown(s, prices, units, args.key_spend), encoding="utf-8", newline="\n")
     print(f"wrote {OUT}/README.md, summary.json, records.csv, by-model.svg, by-load.svg, outcomes.svg")
     return 0
 

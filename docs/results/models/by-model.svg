@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 730 426" width="730" height="426" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
-<title id="t">Corrected once. Does the agent keep doing it right?</title><desc id="d">Correct tool calls in a long session (8k-token history, tight memory), after the same correction, noise and prompt injection. 60 calls per dot; pooled row: 480.</desc>
+<title id="t">Corrected once. Does the agent keep doing it right?</title><desc id="d">Correct tool calls in a long session (8k-token history, tight memory), after the same correction, noise and prompt injection. About 90 calls per dot; pooled row: 716.</desc>
 <style>
 :root{--surface:#ffffff;--ink:#191919;--ink2:#666666;--grid:#e7e7e7;--axis:#c2c2c2;--accent:#257de0;--muted:#8c8c8c;--link:#c9c9c9}
 @media (prefers-color-scheme: dark){:root{--surface:#191919;--ink:#efefef;--ink2:#9c9c9c;--grid:#303030;--axis:#474747;--accent:#338ced;--muted:#7a7a7a;--link:#3d3d3d}}
@@ -7,14 +7,14 @@
 </style>
 <rect class="bg" x="0" y="0" width="730" height="426" rx="8"/>
 <text class="t" x="16" y="28">Corrected once. Does the agent keep doing it right?</text>
-<text class="s" x="16" y="48">Correct tool calls in a long session (8k-token history, tight memory), after the same correction</text>
-<text class="s" x="16" y="64">, noise and prompt injection. 60 calls per dot; pooled row: 480.</text>
-<circle class="base" cx="196" cy="82" r="5"/>
-<text class="l" x="206" y="86">append-notes (usual memory)</text>
-<circle class="gate" cx="419" cy="82" r="5"/>
-<text class="l" x="429" y="86">append-gated (relock&#x27;s gates, still appending)</text>
-<circle class="rl" cx="775" cy="82" r="5"/>
-<text class="l" x="785" y="86">relock</text>
+<text class="s" x="16" y="48">Correct tool calls in a long session (8k-token history, tight memory), after the same correction,</text>
+<text class="s" x="16" y="64">noise and prompt injection. About 90 calls per dot; pooled row: 716.</text>
+<circle class="base" cx="22" cy="82" r="5"/>
+<text class="l" x="32" y="86">append-notes (usual memory)</text>
+<circle class="gate" cx="233" cy="82" r="5"/>
+<text class="l" x="243" y="86">append-gated (relock&#x27;s gates, still appending)</text>
+<circle class="rl" cx="565" cy="82" r="5"/>
+<text class="l" x="575" y="86">relock</text>
 <line class="a" x1="190.0" y1="98" x2="190.0" y2="368"/>
 <text class="tick" x="190.0" y="382" text-anchor="middle">0%</text>
 <line class="g" x1="307.5" y1="98" x2="307.5" y2="368"/>
@@ -26,68 +26,68 @@
 <line class="g" x1="660.0" y1="98" x2="660.0" y2="368"/>
 <text class="tick" x="660.0" y="382" text-anchor="middle">100%</text>
 <text class="l" x="176" y="117.0" text-anchor="end">qwen3.8-flash</text>
-<line class="k" x1="393.7" y1="113.0" x2="620.8" y2="113.0"/>
-<g><title>qwen3.8-flash, append-gated: 63% correct (38/60, 95% CI 51%-74%)</title><circle class="gate" cx="487.7" cy="113.0" r="5"/></g>
-<g><title>qwen3.8-flash, append-notes: 43% correct (26/60, 95% CI 32%-56%)</title><circle class="base" cx="393.7" cy="113.0" r="5"/></g>
-<g><title>qwen3.8-flash, relock: 92% correct (55/60, 95% CI 82%-96%)</title><circle class="rl" cx="620.8" cy="113.0" r="6"/></g>
-<text class="v" x="383.7" y="117.0" text-anchor="end">43%</text>
-<text class="vh" x="631.8" y="117.0">92%</text>
-<text class="l" x="176" y="147.0" text-anchor="end">inkling-2-mini</text>
-<line class="k" x1="393.7" y1="143.0" x2="660.0" y2="143.0"/>
-<g><title>inkling-2-mini, append-gated: 55% correct (33/60, 95% CI 42%-67%)</title><circle class="gate" cx="448.5" cy="143.0" r="5"/></g>
-<g><title>inkling-2-mini, append-notes: 43% correct (26/60, 95% CI 32%-56%)</title><circle class="base" cx="393.7" cy="143.0" r="5"/></g>
-<g><title>inkling-2-mini, relock: 100% correct (60/60, 95% CI 94%-100%)</title><circle class="rl" cx="660.0" cy="143.0" r="6"/></g>
-<text class="v" x="383.7" y="147.0" text-anchor="end">43%</text>
+<line class="k" x1="409.3" y1="113.0" x2="623.4" y2="113.0"/>
+<g><title>qwen3.8-flash, append-gated: 60% correct (54/90, 95% CI 50%-70%)</title><circle class="gate" cx="472.0" cy="113.0" r="5"/></g>
+<g><title>qwen3.8-flash, append-notes: 47% correct (42/90, 95% CI 37%-57%)</title><circle class="base" cx="409.3" cy="113.0" r="5"/></g>
+<g><title>qwen3.8-flash, relock: 92% correct (83/90, 95% CI 85%-96%)</title><circle class="rl" cx="623.4" cy="113.0" r="6"/></g>
+<text class="v" x="399.3" y="117.0" text-anchor="end">47%</text>
+<text class="vh" x="634.4" y="117.0">92%</text>
+<text class="l" x="176" y="147.0" text-anchor="end">kimi-k3</text>
+<line class="k" x1="419.8" y1="143.0" x2="660.0" y2="143.0"/>
+<g><title>kimi-k3, append-gated: 62% correct (56/90, 95% CI 52%-72%)</title><circle class="gate" cx="482.4" cy="143.0" r="5"/></g>
+<g><title>kimi-k3, append-notes: 49% correct (44/90, 95% CI 39%-59%)</title><circle class="base" cx="419.8" cy="143.0" r="5"/></g>
+<g><title>kimi-k3, relock: 100% correct (90/90, 95% CI 96%-100%)</title><circle class="rl" cx="660.0" cy="143.0" r="6"/></g>
+<text class="v" x="409.8" y="147.0" text-anchor="end">49%</text>
 <text class="vh" x="671.0" y="147.0">100%</text>
-<text class="l" x="176" y="177.0" text-anchor="end">kimi-k3</text>
-<line class="k" x1="417.2" y1="173.0" x2="660.0" y2="173.0"/>
-<g><title>kimi-k3, append-gated: 65% correct (39/60, 95% CI 52%-76%)</title><circle class="gate" cx="495.5" cy="173.0" r="5"/></g>
-<g><title>kimi-k3, append-notes: 48% correct (29/60, 95% CI 36%-61%)</title><circle class="base" cx="417.2" cy="173.0" r="5"/></g>
-<g><title>kimi-k3, relock: 100% correct (60/60, 95% CI 94%-100%)</title><circle class="rl" cx="660.0" cy="173.0" r="6"/></g>
-<text class="v" x="407.2" y="177.0" text-anchor="end">48%</text>
+<text class="l" x="176" y="177.0" text-anchor="end">inkling-2-mini</text>
+<line class="k" x1="435.4" y1="173.0" x2="660.0" y2="173.0"/>
+<g><title>inkling-2-mini, append-gated: 62% correct (56/90, 95% CI 52%-72%)</title><circle class="gate" cx="482.4" cy="173.0" r="5"/></g>
+<g><title>inkling-2-mini, append-notes: 52% correct (47/90, 95% CI 42%-62%)</title><circle class="base" cx="435.4" cy="173.0" r="5"/></g>
+<g><title>inkling-2-mini, relock: 100% correct (90/90, 95% CI 96%-100%)</title><circle class="rl" cx="660.0" cy="173.0" r="6"/></g>
+<text class="v" x="425.4" y="177.0" text-anchor="end">52%</text>
 <text class="vh" x="671.0" y="177.0">100%</text>
 <text class="l" x="176" y="207.0" text-anchor="end">deepseek-v4.1-flash</text>
-<line class="k" x1="464.2" y1="203.0" x2="660.0" y2="203.0"/>
-<g><title>deepseek-v4.1-flash, append-gated: 63% correct (38/60, 95% CI 51%-74%)</title><circle class="gate" cx="487.7" cy="203.0" r="5"/></g>
-<g><title>deepseek-v4.1-flash, append-notes: 58% correct (35/60, 95% CI 46%-70%)</title><circle class="base" cx="464.2" cy="203.0" r="5"/></g>
-<g><title>deepseek-v4.1-flash, relock: 100% correct (60/60, 95% CI 94%-100%)</title><circle class="rl" cx="660.0" cy="203.0" r="6"/></g>
-<text class="v" x="454.2" y="207.0" text-anchor="end">58%</text>
+<line class="k" x1="472.0" y1="203.0" x2="660.0" y2="203.0"/>
+<g><title>deepseek-v4.1-flash, append-gated: 63% correct (57/90, 95% CI 53%-73%)</title><circle class="gate" cx="487.7" cy="203.0" r="5"/></g>
+<g><title>deepseek-v4.1-flash, append-notes: 60% correct (54/90, 95% CI 50%-70%)</title><circle class="base" cx="472.0" cy="203.0" r="5"/></g>
+<g><title>deepseek-v4.1-flash, relock: 100% correct (90/90, 95% CI 96%-100%)</title><circle class="rl" cx="660.0" cy="203.0" r="6"/></g>
+<text class="v" x="462.0" y="207.0" text-anchor="end">60%</text>
 <text class="vh" x="671.0" y="207.0">100%</text>
 <text class="l" x="176" y="237.0" text-anchor="end">claude-haiku-5.5</text>
-<line class="k" x1="487.7" y1="233.0" x2="652.2" y2="233.0"/>
-<g><title>claude-haiku-5.5, append-gated: 73% correct (44/60, 95% CI 61%-83%)</title><circle class="gate" cx="534.7" cy="233.0" r="5"/></g>
-<g><title>claude-haiku-5.5, append-notes: 63% correct (38/60, 95% CI 51%-74%)</title><circle class="base" cx="487.7" cy="233.0" r="5"/></g>
-<g><title>claude-haiku-5.5, relock: 98% correct (59/60, 95% CI 91%-100%)</title><circle class="rl" cx="652.2" cy="233.0" r="6"/></g>
-<text class="v" x="477.7" y="237.0" text-anchor="end">63%</text>
-<text class="vh" x="663.2" y="237.0">98%</text>
+<line class="k" x1="482.4" y1="233.0" x2="654.8" y2="233.0"/>
+<g><title>claude-haiku-5.5, append-gated: 76% correct (68/90, 95% CI 66%-83%)</title><circle class="gate" cx="545.1" cy="233.0" r="5"/></g>
+<g><title>claude-haiku-5.5, append-notes: 62% correct (56/90, 95% CI 52%-72%)</title><circle class="base" cx="482.4" cy="233.0" r="5"/></g>
+<g><title>claude-haiku-5.5, relock: 99% correct (89/90, 95% CI 94%-100%)</title><circle class="rl" cx="654.8" cy="233.0" r="6"/></g>
+<text class="v" x="472.4" y="237.0" text-anchor="end">62%</text>
+<text class="vh" x="665.8" y="237.0">99%</text>
 <text class="l" x="176" y="267.0" text-anchor="end">gpt-6-luna</text>
-<line class="k" x1="515.4" y1="263.0" x2="609.6" y2="263.0"/>
-<g><title>gpt-6-luna, append-gated: 78% correct (40/51, 95% CI 65%-88%)</title><circle class="gate" cx="558.6" cy="263.0" r="5"/></g>
-<g><title>gpt-6-luna, append-notes: 69% correct (36/52, 95% CI 56%-80%)</title><circle class="base" cx="515.4" cy="263.0" r="5"/></g>
-<g><title>gpt-6-luna, relock: 89% correct (50/56, 95% CI 79%-95%)</title><circle class="rl" cx="609.6" cy="263.0" r="6"/></g>
-<text class="v" x="505.4" y="267.0" text-anchor="end">69%</text>
-<text class="vh" x="620.6" y="267.0">89%</text>
+<line class="k" x1="499.8" y1="263.0" x2="621.7" y2="263.0"/>
+<g><title>gpt-6-luna, append-gated: 77% correct (68/88, 95% CI 67%-85%)</title><circle class="gate" cx="553.2" cy="263.0" r="5"/></g>
+<g><title>gpt-6-luna, append-notes: 66% correct (58/88, 95% CI 56%-75%)</title><circle class="base" cx="499.8" cy="263.0" r="5"/></g>
+<g><title>gpt-6-luna, relock: 92% correct (79/86, 95% CI 84%-96%)</title><circle class="rl" cx="621.7" cy="263.0" r="6"/></g>
+<text class="v" x="489.8" y="267.0" text-anchor="end">66%</text>
+<text class="vh" x="632.7" y="267.0">92%</text>
 <text class="l" x="176" y="297.0" text-anchor="end">qwen3.8-27b</text>
-<line class="k" x1="534.7" y1="293.0" x2="660.0" y2="293.0"/>
-<g><title>qwen3.8-27b, append-gated: 98% correct (59/60, 95% CI 91%-100%)</title><circle class="gate" cx="652.2" cy="293.0" r="5"/></g>
-<g><title>qwen3.8-27b, append-notes: 73% correct (44/60, 95% CI 61%-83%)</title><circle class="base" cx="534.7" cy="293.0" r="5"/></g>
-<g><title>qwen3.8-27b, relock: 100% correct (60/60, 95% CI 94%-100%)</title><circle class="rl" cx="660.0" cy="293.0" r="6"/></g>
-<text class="v" x="524.7" y="297.0" text-anchor="end">73%</text>
+<line class="k" x1="524.2" y1="293.0" x2="660.0" y2="293.0"/>
+<g><title>qwen3.8-27b, append-gated: 94% correct (85/90, 95% CI 88%-98%)</title><circle class="gate" cx="633.9" cy="293.0" r="5"/></g>
+<g><title>qwen3.8-27b, append-notes: 71% correct (64/90, 95% CI 61%-79%)</title><circle class="base" cx="524.2" cy="293.0" r="5"/></g>
+<g><title>qwen3.8-27b, relock: 100% correct (90/90, 95% CI 96%-100%)</title><circle class="rl" cx="660.0" cy="293.0" r="6"/></g>
+<text class="v" x="514.2" y="297.0" text-anchor="end">71%</text>
 <text class="vh" x="671.0" y="297.0">100%</text>
 <text class="l" x="176" y="327.0" text-anchor="end">daisyrose-27b</text>
-<line class="k" x1="558.2" y1="323.0" x2="660.0" y2="323.0"/>
-<g><title>daisyrose-27b, append-gated: 95% correct (57/60, 95% CI 86%-98%)</title><circle class="gate" cx="636.5" cy="323.0" r="5"/></g>
-<g><title>daisyrose-27b, append-notes: 78% correct (47/60, 95% CI 66%-87%)</title><circle class="base" cx="558.2" cy="323.0" r="5"/></g>
-<g><title>daisyrose-27b, relock: 100% correct (60/60, 95% CI 94%-100%)</title><circle class="rl" cx="660.0" cy="323.0" r="6"/></g>
-<text class="v" x="548.2" y="327.0" text-anchor="end">78%</text>
+<line class="k" x1="550.3" y1="323.0" x2="660.0" y2="323.0"/>
+<g><title>daisyrose-27b, append-gated: 96% correct (86/90, 95% CI 89%-98%)</title><circle class="gate" cx="639.1" cy="323.0" r="5"/></g>
+<g><title>daisyrose-27b, append-notes: 77% correct (69/90, 95% CI 67%-84%)</title><circle class="base" cx="550.3" cy="323.0" r="5"/></g>
+<g><title>daisyrose-27b, relock: 100% correct (90/90, 95% CI 96%-100%)</title><circle class="rl" cx="660.0" cy="323.0" r="6"/></g>
+<text class="v" x="540.3" y="327.0" text-anchor="end">77%</text>
 <text class="vh" x="671.0" y="327.0">100%</text>
 <line class="a" x1="16" y1="339.0" x2="714" y2="339.0"/>
 <text class="lh" x="176" y="357.0" text-anchor="end">all 8 models</text>
-<line class="k" x1="469.8" y1="353.0" x2="648.2" y2="353.0"/>
-<g><title>all 8 models, append-gated: 74% correct (348/471, 95% CI 70%-78%)</title><circle class="gate" cx="537.3" cy="353.0" r="5"/></g>
-<g><title>all 8 models, append-notes: 60% correct (281/472, 95% CI 55%-64%)</title><circle class="base" cx="469.8" cy="353.0" r="5"/></g>
-<g><title>all 8 models, relock: 97% correct (464/476, 95% CI 96%-99%)</title><circle class="rl" cx="648.2" cy="353.0" r="6"/></g>
-<text class="v" x="459.8" y="357.0" text-anchor="end">60%</text>
-<text class="vh" x="659.2" y="357.0">97%</text>
+<line class="k" x1="474.1" y1="353.0" x2="650.2" y2="353.0"/>
+<g><title>all 8 models, append-gated: 74% correct (530/718, 95% CI 70%-77%)</title><circle class="gate" cx="536.9" cy="353.0" r="5"/></g>
+<g><title>all 8 models, append-notes: 60% correct (434/718, 95% CI 57%-64%)</title><circle class="base" cx="474.1" cy="353.0" r="5"/></g>
+<g><title>all 8 models, relock: 98% correct (701/716, 95% CI 97%-99%)</title><circle class="rl" cx="650.2" cy="353.0" r="6"/></g>
+<text class="v" x="464.1" y="357.0" text-anchor="end">60%</text>
+<text class="vh" x="661.2" y="357.0">98%</text>
 <text class="s" x="16" y="412">RelapseBench behavioural mode via OpenRouter; reasoning off, temperature 0. Details: docs/results/models.</text>
 </svg>
