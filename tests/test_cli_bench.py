@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 import relock_memory as rl
 from relock_memory.bench.agents import ScriptedAgent
 from relock_memory.bench.harness import LOADS, Config, aggregate, run_behavioral, run_structural
@@ -116,3 +118,19 @@ def test_llm_agent_parsing():
     broken = LLMAgent(lambda p: "I refuse")
     assert broken.act(fam, "t", "", "", {"old": "x", "new": "y", "poison": "z"}) == ""
     assert broken.failures == 1
+
+
+# ---------------------------------------------------------------- mcp cli
+def test_cli_mcp_passes_verifiers_and_cwd(tmp_path, monkeypatch):
+    pytest.importorskip("mcp")
+    import relock_memory.integrations.mcp as mcp_mod
+
+    seen = {}
+    monkeypatch.setattr(mcp_mod, "serve", lambda db, **kw: seen.update(db=db, **kw))
+    db = str(tmp_path / "m.db")
+    assert main(["--db", db, "mcp", "--verifier", "tests=pytest -q", "--cwd", str(tmp_path)]) == 0
+    assert seen["db"] == db
+    assert seen["verifiers"] == {"tests": "pytest -q"}
+    assert seen["verifier_cwd"] == str(tmp_path)
+    assert main(["--db", db, "mcp", "--cwd", str(tmp_path / "missing")]) == 2
+    assert main(["--db", db, "mcp", "--verifier", "no-command"]) == 2

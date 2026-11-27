@@ -1,12 +1,12 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling>=1.24", "hatch-fancy-pypi-readme>=24.1"]
 build-backend = "hatchling.build"
 
 [project]
 name = "relock-memory"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agent memory that unlocks on recall, rewrites on surprise, and re-locks. Prediction-error-gated, in-place memory reconsolidation for LLM agents."
-readme = "README.md"
+dynamic = ["readme"]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
@@ -48,6 +48,31 @@ relock = "relock_memory.cli:main"
 Homepage = "https://github.com/inboxpraveen/relock"
 Repository = "https://github.com/inboxpraveen/relock"
 Issues = "https://github.com/inboxpraveen/relock/issues"
+Changelog = "https://github.com/inboxpraveen/relock/blob/main/CHANGELOG.md"
+
+# PyPI renders the README without GitHub's relative links, heading anchors or Mermaid, so the
+# copy that goes into the package metadata points those at GitHub instead.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '```mermaid(?s:.*?)```'
+replacement = '*The state diagram is rendered in the [README on GitHub](https://github.com/inboxpraveen/relock#the-mechanism).*'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '!\[([^\]]*)\]\((?!https?://)([^)\s]+)\)'
+replacement = '![\1](https://raw.githubusercontent.com/inboxpraveen/relock/main/\2)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\(#([^)\s]+)\)'
+replacement = '](https://github.com/inboxpraveen/relock#\1)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?!https?://)([^)\s]+)\)'
+replacement = '](https://github.com/inboxpraveen/relock/blob/main/\1)'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/relock_memory"]

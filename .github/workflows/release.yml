@@ -1,8 +1,9 @@
 name: release
 
-# Builds the sdist and wheel for every published GitHub release and attaches them to it.
-# Publishing to PyPI uses Trusted Publishing (no API token) and stays off until the
-# repository variable PUBLISH_TO_PYPI is set to "true"; see CONTRIBUTING.md.
+# Builds the sdist and wheel for every published GitHub release, attaches them to it and
+# publishes them to PyPI through Trusted Publishing (no API token). Publishing runs only for
+# release events, after the version check, and only while the repository variable
+# PUBLISH_TO_PYPI is "true". A manual run only builds. See CONTRIBUTING.md.
 
 on:
   release:
@@ -48,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   pypi:
-    if: vars.PUBLISH_TO_PYPI == 'true'
+    if: github.event_name == 'release' && vars.PUBLISH_TO_PYPI == 'true'
     needs: build
     runs-on: ubuntu-latest
     environment:

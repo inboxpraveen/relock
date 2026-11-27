@@ -1,7 +1,8 @@
 # relock
 
 [![ci](https://github.com/inboxpraveen/relock/actions/workflows/ci.yml/badge.svg)](https://github.com/inboxpraveen/relock/actions/workflows/ci.yml)
-[![python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)](pyproject.toml)
+[![pypi](https://img.shields.io/pypi/v/relock-memory)](https://pypi.org/project/relock-memory/)
+[![python](https://img.shields.io/pypi/pyversions/relock-memory)](https://pypi.org/project/relock-memory/)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 **Agent memory that unlocks on recall, rewrites on surprise, and re-locks.**
@@ -12,15 +13,15 @@ again. relock fixes the instruction that fired, in place, but only when a **trus
 that its prediction was wrong, and only while that memory is **reactivated**.
 
 ```
-pip install "relock-memory @ git+https://github.com/inboxpraveen/relock"        # core: zero dependencies
-pip install "relock-memory[all] @ git+https://github.com/inboxpraveen/relock"   # + Postgres, MCP, LangChain/LangGraph
+pip install relock-memory            # core: zero dependencies
+pip install "relock-memory[all]"     # + Postgres, MCP, LangChain/LangGraph
 ```
 
-Wheels are attached to each [GitHub release](https://github.com/inboxpraveen/relock/releases).
-Once the package is on PyPI, the command becomes `pip install relock-memory` (or
-`"relock-memory[all]"`).
+The extras can also be installed one at a time: `[postgres]`, `[mcp]`, `[langchain]`.
 The distribution is `relock-memory` and the import is `relock_memory`, because the PyPI name
 `relock` belongs to an unrelated SDK that also installs a top-level `relock` module.
+The development version installs with
+`pip install "relock-memory @ git+https://github.com/inboxpraveen/relock"`.
 
 > **Status:** v0.1, alpha. The mechanism, storage, integrations and benchmark harness are
 > complete. They are tested on Python 3.10–3.13, SQLite and Postgres, and `mcp` 1.x and 2.x.
@@ -118,12 +119,24 @@ safe is **the model predicts, the harness judges**.
 {
   "mcpServers": {
     "relock": {
-      "command": "relock",
-      "args": ["--db", "/path/to/relock.db", "mcp", "--verifier", "tests=pytest -q", "--verifier", "lint=ruff check ."]
+      "command": "uvx",
+      "args": ["--from", "relock-memory[mcp]", "relock", "--db", "/path/to/relock.db", "mcp",
+               "--verifier", "tests=pytest -q", "--verifier", "lint=ruff check ."]
     }
   }
 }
 ```
+
+[`uvx`](https://docs.astral.sh/uv/) fetches the package the first time the client starts the
+server. If you installed `relock-memory[mcp]` with pip instead, use `"command": "relock"` and drop
+the first two arguments. In Claude Code the same server is one command:
+
+```
+claude mcp add relock -- uvx --from "relock-memory[mcp]" relock --db relock.db mcp --verifier tests="pytest -q"
+```
+
+Verifier commands run in the server's working directory, which depends on the client. Pass
+`--cwd /path/to/project` to pin it.
 
 Tools exposed: `relock_begin`, `relock_recall`, `relock_expect`, `relock_verify`, `relock_report`,
 `relock_history`, `relock_end`, plus `relock_teach` if you start the server with `--allow-teach`.
@@ -273,7 +286,7 @@ relock events --item orders.fetch # audit log: recalls, predictions, gate decisi
 relock rollback orders.fetch 1    # restores v1 as a new version (history is never destroyed)
 relock edit orders.fetch --replace c2 "Pass dates as YYYY-MM-DD."
 relock export traces.jsonl        # SFT and preference pairs from every rewrite
-relock mcp --verifier tests="pytest -q" [--allow-teach] [--trust-agent-reports]
+relock mcp --verifier tests="pytest -q" [--cwd DIR] [--allow-teach] [--trust-agent-reports]
 relock bench [--mode structural|behavioral|both]
 ```
 

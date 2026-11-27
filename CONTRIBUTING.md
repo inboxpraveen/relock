@@ -51,12 +51,16 @@ stack you used.
 ## Releases (maintainers)
 
 1. Bump `version` in `pyproject.toml` and `__version__` in `src/relock_memory/__init__.py`, and
-   date the entry in `CHANGELOG.md`.
-2. Create a GitHub release with the tag `vX.Y.Z`. The `release` workflow builds the sdist and
-   wheel, checks the version against the tag, and attaches the files to the release.
-3. PyPI publishing uses [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) and is
-   off until it is configured once:
-   - On PyPI, add a (pending) trusted publisher for project `relock-memory`: owner
-     `inboxpraveen`, repository `relock`, workflow `release.yml`, environment `pypi`.
-   - In the GitHub repository settings, set the Actions variable `PUBLISH_TO_PYPI` to `true`.
-   - Re-run the `release` workflow for the tag, or publish the next release.
+   add a dated entry to `CHANGELOG.md`. Merge to `main` and wait for CI to pass.
+2. Create a GitHub release with the tag `vX.Y.Z`, for example
+   `gh release create vX.Y.Z --title vX.Y.Z --notes-file notes.md`.
+3. The `release` workflow then:
+   - builds the sdist and wheel and checks the version against the tag;
+   - attaches both files to the release;
+   - publishes them to PyPI.
+
+PyPI publishing uses [Trusted Publishing](https://docs.pypi.org/trusted-publishers/), so no API
+token is stored anywhere. PyPI trusts the `release.yml` workflow of `inboxpraveen/relock`
+running in the `pypi` environment. That environment only accepts `v*` tags. To pause
+publishing, set the Actions variable `PUBLISH_TO_PYPI` to anything but `true`. PyPI never
+accepts the same version twice, so a mistake needs a new version, not a re-upload.

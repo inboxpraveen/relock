@@ -171,8 +171,12 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             print(f"bad --verifier {spec!r}; use NAME=COMMAND", file=sys.stderr)
             return 2
         verifiers[name.strip()] = command.strip()
+    if args.cwd is not None and not os.path.isdir(args.cwd):
+        print(f"error: --cwd {args.cwd!r} is not a directory", file=sys.stderr)
+        return 2
     serve(args.db, transport=args.transport, rewriter=_llm_rewriter(args), verifiers=verifiers,
-          verifier_timeout=args.verifier_timeout, trust_agent_reports=args.trust_agent_reports,
+          verifier_timeout=args.verifier_timeout, verifier_cwd=args.cwd,
+          trust_agent_reports=args.trust_agent_reports,
           allow_teach=args.allow_teach, idle_timeout=args.idle_timeout or None, k=args.k)
     return 0
 
@@ -253,6 +257,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--verifier", action="append", metavar="NAME=COMMAND",
                     help="trusted check the agent may run by name, e.g. tests='pytest -q' (repeatable)")
     sp.add_argument("--verifier-timeout", type=float, default=600.0)
+    sp.add_argument("--cwd", metavar="DIR",
+                    help="directory the verifier commands run in (default: the server's working directory)")
     sp.add_argument("--trust-agent-reports", action="store_true",
                     help="let the agent's own outcome reports rewrite memory (single-user sandboxes only)")
     sp.add_argument("--allow-teach", action="store_true",

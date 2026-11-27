@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 - 2026-11-28
+
+First release on PyPI: `pip install relock-memory`. No changes to the memory mechanism.
+
+- `relock mcp --cwd DIR` sets the directory the verifier commands run in.
+- README:
+  - install from PyPI;
+  - MCP setup with `uvx` and `claude mcp add`;
+  - links and the results chart also work on the PyPI project page.
+- The release workflow publishes to PyPI only for release events, after the version check.
+
 ## 0.1.0 - 2026-11-27
 
 First public version.
