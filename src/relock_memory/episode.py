@@ -19,6 +19,7 @@ from ._util import new_id, now, short_repr
 from .checks import as_check, succeeds
 from .delta import DeltaError, apply, validate
 from .delta import diff as clause_diff
+from .policy import WritePolicy
 from .rewriters import Evidence, RewriteRequest
 from .signals import ErrorClass, Signal, Source, classify_exception
 from .types import (
@@ -158,6 +159,7 @@ class Episode:
         check: Any = None,
         clauses: list[str] | tuple[str, ...] | None = None,
         tool: str | None = None,
+        author: str = "harness",
         _auto: bool = False,
     ) -> Expectation:
         """Record what acting on a recalled item should produce.
@@ -166,7 +168,10 @@ class Episode:
         callable). ``clauses`` cites the clause ids the action relies on: with the
         default ``edit_scope="cited"`` only those clauses can be rewritten.
         ``tool`` binds the expectation to a wrapped tool so the tool's real
-        outcome resolves it.
+        outcome resolves it. ``author="agent"`` marks a prediction the model wrote
+        (via the toolkit or MCP); its text is withheld from the rewriter unless the
+        policy trusts agent reports, so the model cannot smuggle text into memory
+        through the prediction it states.
         """
         self._ensure_open()
         item_id = self._item_id(target)
@@ -192,6 +197,7 @@ class Episode:
                 tool=tool,
                 check=as_check(check),
                 auto=_auto,
+                author=author,
             )
             self._expectations[exp.id] = exp
         self.store.add_expectation({
@@ -201,7 +207,7 @@ class Episode:
         })
         self.memory._emit("expect", episode_id=self.id, item_id=item.id, version=item.version,
                           data={"expectation_id": exp.id, "statement": exp.statement, "clauses": list(cited),
-                                "tool": tool, "auto": _auto})
+                                "tool": tool, "auto": _auto, "author": author})
         return exp
 
     def observe(
@@ -299,6 +305,7 @@ class Episode:
         error_id = new_id("err")
         diff = {
             "expected": exp.statement,
+            "expected_by": exp.author,
             "check": getattr(exp.check, "spec", None),
             "observed": reason,
             "outcome": outcome,
@@ -367,7 +374,7 @@ class Episode:
             editable = frozenset(cited) if cited else None
         request = RewriteRequest(
             item=current,
-            evidence=tuple(self._to_evidence(e) for e in pending),
+            evidence=tuple(evidence_for_rewriter(e, self.policy) for e in pending),
             editable=editable,
             task=self.task,
             max_ops=self.policy.max_ops,
@@ -435,23 +442,8 @@ class Episode:
                         item_id, current.version, new.version, evidence, required, new.delta)
 
     @staticmethod
-    def _to_evidence(e: dict[str, Any]) -> Evidence:
-        d = e["diff"]
-        sig = Signal.from_dict(d["signal"])
-        cls = (sig.error_class or ErrorClass.UNKNOWN).value
-        withheld = "(detail withheld: may contain untrusted content)"
-        return Evidence(
-            error_id=e["id"],
-            expectation=d.get("expected", ""),
-            clause_ids=tuple(d.get("clause_ids") or ()),
-            tool=d.get("tool"),
-            observed=str(d.get("observed", "")) if sig.detail_trusted else f"{cls} failure {withheld}",
-            source=sig.source.value,
-            error_class=cls,
-            message=sig.message if sig.detail_trusted else withheld,
-            correction=sig.correction if sig.detail_trusted else None,
-            authoritative=bool(e["authoritative"]),
-        )
+    def _to_evidence(e: dict[str, Any], policy: WritePolicy | None = None) -> Evidence:
+        return evidence_for_rewriter(e, policy or WritePolicy())
 
     # ------------------------------------------------------------------ conveniences
     def correct(self, target: str | Item | Hit, correction: str, *, principal: str | None = None,
@@ -520,3 +512,34 @@ class Episode:
         self.memory._emit("relock", episode_id=self.id, data=self.summary)
         self.memory._unregister(self)
         return self.summary
+
+
+AGENT_TEXT_WITHHELD = "(prediction stated by the agent; withheld because agent text is untrusted)"
+DETAIL_WITHHELD = "(detail withheld: may contain untrusted content)"
+
+
+def evidence_for_rewriter(e: dict[str, Any], policy: WritePolicy) -> Evidence:
+    """Sanitise one admitted prediction error for the rewriter.
+
+    Text reaches the rewriter only from trusted authors: a signal's message and
+    correction are dropped when ``detail_trusted`` is false, and a prediction the
+    *agent* stated is dropped unless the policy trusts agent reports.
+    """
+    d = e["diff"]
+    sig = Signal.from_dict(d["signal"])
+    cls = (sig.error_class or ErrorClass.UNKNOWN).value
+    expected = d.get("expected", "")
+    if d.get("expected_by") == "agent" and Source.AGENT not in policy.trusted_sources:
+        expected = AGENT_TEXT_WITHHELD
+    return Evidence(
+        error_id=e["id"],
+        expectation=expected,
+        clause_ids=tuple(d.get("clause_ids") or ()),
+        tool=d.get("tool"),
+        observed=str(d.get("observed", "")) if sig.detail_trusted else f"{cls} failure {DETAIL_WITHHELD}",
+        source=sig.source.value,
+        error_class=cls,
+        message=sig.message if sig.detail_trusted else DETAIL_WITHHELD,
+        correction=sig.correction if sig.detail_trusted else None,
+        authoritative=bool(e["authoritative"]),
+    )

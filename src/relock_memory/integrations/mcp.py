@@ -110,21 +110,26 @@ def build_server(
 
     @server.tool(name="relock_verify",
                  description="Resolve an expectation with a trusted verifier run by the server. "
-                             f"Available verifiers: {', '.join(sorted(verifiers)) or 'none configured'}.")
+                             f"Available verifiers: {', '.join(sorted(verifiers)) or 'none configured'}. "
+                             "A suggested correction is only used if the server trusts agent reports.")
     def relock_verify(expectation_id: str, verifier: str, correction: str = "") -> str:
         if verifier not in verifiers:
             return f"error: unknown verifier {verifier!r}; available: {sorted(verifiers)}"
         signal = run_verifier(verifiers[verifier], timeout=verifier_timeout, cwd=verifier_cwd)
         signal = signal.with_(data={**signal.data, "verifier": verifier})
-        if correction and not signal.passed:
-            # the agent may *suggest* the fix; the verifier's verdict is what makes the error trusted
+        # The verifier's verdict is trusted; the agent's suggested fix is not. Attaching it to a
+        # VERIFIER signal would let the agent write arbitrary text into memory whenever the check
+        # is red for any reason, so it is used only when the operator trusts agent reports.
+        correction_used = bool(correction) and not signal.passed and trust_agent_reports
+        if correction_used:
             signal = signal.with_(correction=correction)
         try:
             obs = kit.episode().observe(expectation_id, signal=signal)
         except (RelockError, ValueError, KeyError) as e:
             return f"error: {e}"
         return json.dumps({"verifier": verifier, "passed": signal.passed, "matched": obs.matched,
-                           **obs.decision.to_dict(), "output": signal.message[-600:]})
+                           **obs.decision.to_dict(), "output": signal.message[-600:],
+                           "correction_used": correction_used})
 
     if allow_teach:
         @server.tool(name="relock_teach", description="Save a new procedure (title plus one clause per step).")

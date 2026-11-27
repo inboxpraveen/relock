@@ -96,7 +96,8 @@ class Toolkit:
         Returns an expectation id. The tool's real result is checked against it automatically.
         """
         try:
-            exp = self.episode().expect(item, prediction, clauses=clause_ids or None, tool=tool or None)
+            exp = self.episode().expect(item, prediction, clauses=clause_ids or None, tool=tool or None,
+                                        author="agent")
         except (RelockError, ValueError, KeyError) as e:
             return f"error: {e}"
         return exp.id

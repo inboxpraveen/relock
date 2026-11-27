@@ -243,6 +243,8 @@ class Expectation:
     tool: str | None = None
     check: Any = None
     auto: bool = False
+    author: str = "harness"
+    """Who wrote ``statement``: ``"harness"`` (your code) or ``"agent"`` (the model, via tools)."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -255,6 +257,7 @@ class Expectation:
             "tool": self.tool,
             "check": getattr(self.check, "spec", None),
             "auto": self.auto,
+            "author": self.author,
         }
 
 

@@ -17,7 +17,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
-from .episode import Episode
+from .episode import evidence_for_rewriter
 from .memory import Memory
 from .rewriters import RewriteRequest, build_prompt
 
@@ -29,7 +29,7 @@ def rewrite_records(memory: Memory) -> Iterator[dict[str, Any]]:
             continue
         old = memory.get(new.id, new.parent_version)
         errors = memory.store.errors_by_ids(list(new.evidence))
-        evidence = tuple(Episode._to_evidence(e) for e in errors)
+        evidence = tuple(evidence_for_rewriter(e, memory.policy) for e in errors)
         cited = {c for e in errors for c in (e["diff"].get("clause_ids") or [])}
         request = RewriteRequest(item=old, evidence=evidence, editable=frozenset(cited) if cited else None,
                                  max_ops=memory.policy.max_ops, max_clause_chars=memory.policy.max_clause_chars)

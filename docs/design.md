@@ -154,6 +154,7 @@ WHERE v.change_kind = 'reconsolidate' AND v.created_at > now() - interval '7 day
 | Threat | Mitigation |
 |---|---|
 | Prompt injection rewrites a trusted procedure ("memory poisoning") | `ENVIRONMENT`, `AGENT` and `SELF` sources cannot open writes; their errors are stored as `blocked` for audit. |
+| A (possibly injected) agent piggybacks its own text on a *trusted* failure | Text reaches the rewriter only from trusted authors. Predictions stated through the toolkit or MCP are marked `author="agent"` and withheld from the rewriter. A `correction` the agent passes to `relock_verify` is dropped. Both apply unless the operator trusts agent reports. Clause ids the agent cites can narrow what is editable but carry no text. |
 | Injected text reaches the rewriter through a trusted tool's error message | Mark the signal `detail_trusted=False`. The failure counts, but its text is withheld from the rewriter. |
 | One flaky failure overwrites a good procedure | Transient classes never count; evidence threshold with inertia; flake damping by later confirmations. |
 | Fake confirmations make a poisoned item sticky | Only trusted confirmations raise confidence and inertia. |

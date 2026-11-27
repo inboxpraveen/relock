@@ -115,11 +115,20 @@ safe is **the model predicts, the harness judges**.
 ```
 
 Tools exposed: `relock_begin`, `relock_recall`, `relock_expect`, `relock_verify`, `relock_report`,
-`relock_teach`, `relock_history`, `relock_end`. Because the agent calls these tools, its own
-`relock_report`s are **untrusted** by default and are logged but never rewrite memory. Trusted
-outcomes come from **verifiers**: commands fixed by whoever starts the server. The agent can only
-pick one by name; the server runs it and reads the exit code itself. For a single-user local
-sandbox you can opt in with `--trust-agent-reports`.
+`relock_teach`, `relock_history`, `relock_end`.
+
+Because the agent calls these tools, **nothing the agent writes is trusted by default**:
+
+- its `relock_report`s are logged but never rewrite memory;
+- the prediction text it gives `relock_expect` is withheld from the rewriter;
+- a `correction` it suggests to `relock_verify` is ignored.
+
+Trusted outcomes come from **verifiers**: commands fixed by whoever starts the server. The agent
+can only pick one by name; the server runs it and reads the exit code itself. Two red verifier
+runs are therefore enough evidence for a rewrite, but the fix comes from the verifier's output
+(with an LLM rewriter) or from a trusted correction, never from the agent's text.
+
+For a single-user local sandbox, `--trust-agent-reports` opts in to all three.
 
 ## Safety model
 
