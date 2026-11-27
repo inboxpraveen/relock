@@ -74,6 +74,9 @@ class HintRewriter:
 
     It replaces the cited clause (or, when nothing was cited, the clause most
     similar to the correction), and adds a new clause when nothing is similar.
+    If a clause *outside* the cited set resembles the correction more than the
+    cited one, the citation is treated as suspect and the correction is added
+    rather than overwriting an unrelated clause.
     It needs no model, which makes it the default for tests, CI and the
     offline benchmark, and the fallback when an LLM rewriter fails.
     """
@@ -103,8 +106,13 @@ class HintRewriter:
         target = scored[0]
         if target.text.strip() == chosen:
             return None
-        cited = request.editable is not None
-        if cited or _overlap(target.text, chosen) >= self.min_overlap:
+        sim = _overlap(target.text, chosen)
+        best_overall = max(_overlap(c.text, chosen) for c in clauses)
+        if best_overall > sim + 1e-9:
+            return Proposal([Op("add", text=chosen)],
+                            f"correction resembles a clause outside the editable set more than {target.id}; "
+                            "adding instead of overwriting", self.name)
+        if request.editable is not None or sim >= self.min_overlap:  # a trusted citation names the clause
             return Proposal([Op("replace", id=target.id, text=chosen)],
                             f"replace {target.id} with trusted correction", self.name)
         return Proposal([Op("add", text=chosen)], "no similar clause; adding correction", self.name)

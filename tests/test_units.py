@@ -317,3 +317,37 @@ def test_ids_are_unique_and_sort_in_creation_order():
     ids = [new_id("x") for _ in range(20000)]  # many share a millisecond
     assert len(set(ids)) == len(ids)
     assert ids == sorted(ids)
+
+
+def test_hint_rewriter_adds_when_citation_points_away_from_the_fix():
+    from relock_memory.rewriters import HintRewriter
+
+    item = Item(id="i", version=1, title="Fetch", clauses=(
+        Clause("c1", "Authenticate with the orders API key before calling get_orders."),
+        Clause("c2", "Pass the date to get_orders as MM/DD/YYYY.")))
+    ev = Evidence(error_id="e", expectation="", clause_ids=("c1",), tool="get_orders", observed="",
+                  source="tool", error_class="programmatic", message="",
+                  correction="Pass the date to get_orders as YYYY-MM-DD.", authoritative=False)
+    suspect = HintRewriter().propose(RewriteRequest(item=item, evidence=(ev,), editable=frozenset({"c1"})))
+    assert [o.op for o in suspect.ops] == ["add"]
+    aimed = HintRewriter().propose(RewriteRequest(item=item, evidence=(ev,), editable=frozenset({"c2"})))
+    assert [(o.op, o.id) for o in aimed.ops] == [("replace", "c2")]
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="needs os.fork")
+def test_forked_children_do_not_continue_the_parents_id_sequence():
+    import os
+
+    from relock_memory import _util
+
+    _util.new_id("x")
+    assert _util._id_last[0] != 0
+    r, w = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # child: report the inherited sequence state, then exit without pytest teardown
+        os.write(w, repr(list(_util._id_last)).encode())
+        os._exit(0)
+    os.close(w)
+    state = os.read(r, 100).decode()
+    os.waitpid(pid, 0)
+    assert state == "[0, 0]"

@@ -278,3 +278,44 @@ def test_user_corrections_need_explicit_authentication(mem, orders):
         obs = ep.correct(item, "Call get_orders with YYYY-MM-DD.", clauses=["c2"])
         assert obs.verdict is rl.Verdict.BLOCKED and "authenticated=True" in obs.decision.reason
     assert mem.get("orders.fetch").version == 1
+
+
+def test_agent_cannot_choose_which_clause_is_overwritten(mem, orders):
+    """A genuine trusted failure must not let the agent aim the fix at a clause it wants gone."""
+    _, get_orders = orders
+    kit = Toolkit(mem)
+    for _ in range(2):
+        with mem.episode("t"):
+            kit.recall_memory("fetch orders")
+            kit.state_expectation("orders.fetch", "rows", ["c1"], tool="get_orders")  # cites the auth rule
+            with pytest.raises(rl.ToolError):
+                get_orders("03/05/2026")
+    item = mem.get("orders.fetch")
+    assert item.version == 2
+    assert item.clause("c1").text.startswith("Authenticate")  # the safety clause survives
+    assert "YYYY-MM-DD" in item.clause("c2").text  # the fix lands on the clause that was wrong
+
+
+def test_mcp_verifier_runtime_is_not_idle_time(mem, orders, monkeypatch):
+    pytest.importorskip("mcp")
+    from relock_memory.integrations import mcp as relock_mcp
+
+    clock = [0.0]
+    monkeypatch.setattr("relock_memory.integrations.toolkit.time.monotonic", lambda: clock[0])
+
+    def slow_verifier(command, *, timeout, cwd):
+        clock[0] += 10_000  # a test suite far longer than the idle timeout
+        return rl.Signal.verifier(False, "exit 1")
+
+    monkeypatch.setattr(relock_mcp, "run_verifier", slow_verifier)
+    server = relock_mcp.build_server(mem, verifiers={"tests": "unused"}, idle_timeout=60)
+
+    async def run():
+        async with _mcp_client(server) as c:
+            await c.call_tool("relock_recall", {"query": "fetch orders date"})
+            exp = _text(await c.call_tool("relock_expect", {"item": "orders.fetch", "prediction": "rows"}))
+            out = _text(await c.call_tool("relock_verify", {"expectation_id": exp, "verifier": "tests"}))
+            assert not out.startswith("error"), out
+            assert json.loads(out)["verdict"] == "pending"
+
+    asyncio.run(run())

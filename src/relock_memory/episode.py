@@ -370,7 +370,9 @@ class Episode:
 
         editable: frozenset[str] | None = None
         if self.policy.edit_scope == "cited":
-            cited = {c for e in pending for c in (e["diff"].get("clause_ids") or [])}
+            # Citations narrow the edit only when a trusted author made them: an untrusted agent
+            # could otherwise point a genuine failure's fix at a clause it wants gone.
+            cited = {c for e in pending for c in _trusted_citations(e, self.policy)}
             editable = frozenset(cited) if cited else None
         request = RewriteRequest(
             item=current,
@@ -523,23 +525,34 @@ AGENT_TEXT_WITHHELD = "(prediction stated by the agent; withheld because agent t
 DETAIL_WITHHELD = "(detail withheld: may contain untrusted content)"
 
 
+def _agent_untrusted(diff: dict[str, Any], policy: WritePolicy) -> bool:
+    return diff.get("expected_by") == "agent" and Source.AGENT not in policy.trusted_sources
+
+
+def _trusted_citations(e: dict[str, Any], policy: WritePolicy) -> tuple[str, ...]:
+    d = e["diff"]
+    return () if _agent_untrusted(d, policy) else tuple(d.get("clause_ids") or ())
+
+
 def evidence_for_rewriter(e: dict[str, Any], policy: WritePolicy) -> Evidence:
     """Sanitise one admitted prediction error for the rewriter.
 
-    Text reaches the rewriter only from trusted authors: a signal's message and
-    correction are dropped when ``detail_trusted`` is false, and a prediction the
-    *agent* stated is dropped unless the policy trusts agent reports.
+    Only trusted authors steer the rewriter. A signal's message and correction are
+    dropped when ``detail_trusted`` is false. A prediction the *agent* stated, and the
+    clause ids it cited, are dropped unless the policy trusts agent reports: the
+    failure still counts as evidence, but the agent neither words the fix nor picks
+    which clause receives it.
     """
     d = e["diff"]
     sig = Signal.from_dict(d["signal"])
     cls = (sig.error_class or ErrorClass.UNKNOWN).value
     expected = d.get("expected", "")
-    if d.get("expected_by") == "agent" and Source.AGENT not in policy.trusted_sources:
+    if _agent_untrusted(d, policy):
         expected = AGENT_TEXT_WITHHELD
     return Evidence(
         error_id=e["id"],
         expectation=expected,
-        clause_ids=tuple(d.get("clause_ids") or ()),
+        clause_ids=_trusted_citations(e, policy),
         tool=d.get("tool"),
         observed=str(d.get("observed", "")) if sig.detail_trusted else f"{cls} failure {DETAIL_WITHHELD}",
         source=sig.source.value,
