@@ -164,6 +164,8 @@ WHERE v.change_kind = 'reconsolidate' AND v.created_at > now() - interval '7 day
 | A bad rewrite slips through | Full version history; `rollback` restores any version as a new version; every decision is in `relock_events`. |
 | Late edits after the context is gone | Closed episodes raise `EpisodeClosedError` on any write. Episodes the toolkit or MCP server opened themselves are re-locked after `idle_timeout` seconds (default 1800) without a call, so a client that never ends its task does not keep items editable. |
 | "The user said so" | `Signal.user` and `Episode.correct` default to `authenticated=False` and are blocked; the application must vouch for the user explicitly. |
+| Someone on the network rewrites memory through the HTTP API | `relock serve` trusts the `source` its caller declares, so callers must be your harness. Without `RELOCK_TOKEN` it binds only to loopback and refuses a public address. With a token, every route except health and the OpenAPI document needs `Authorization: Bearer`, and the token check runs in constant time. JSON types are strict, so `"authenticated": "false"` is rejected rather than read as true. Bodies are capped at 1 MiB, and a request carrying both framings is refused. Connections and open episodes are capped, stalled connections time out, and idle episodes are re-locked in the background. |
+| A write races the episode's close | `observe`, `expect`, `recall` and `use` re-check that the episode is open under the lock `close()` takes. A close that lands mid-request wins, and the write fails with `EpisodeClosedError` instead of committing after re-lock. `tool_result` binds and resolves under that lock, so concurrent reports never collide. |
 
 Not mitigated in v0.1:
 

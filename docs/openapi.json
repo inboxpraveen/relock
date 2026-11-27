@@ -142,6 +142,8 @@
           },
           "status": {
             "type": "integer",
+            "minimum": 100,
+            "maximum": 599,
             "description": "HTTP status of the failed call, if any. 408/425/429/5xx count as transient."
           },
           "transient": {

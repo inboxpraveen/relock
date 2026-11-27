@@ -14,6 +14,11 @@
 - **Fix:** a failure passed explicitly as a signal, such as
   `ep.observe(exp, signal=Signal.tool_error(...))`, was recorded as a success when the
   expectation had a `succeeds()` check and no exception was passed.
+- **Fix:** an episode closed while a write was in flight could still commit a rewrite after
+  re-lock. `observe`, `expect`, `recall` and `use` now re-check under the episode lock, and
+  `tool_result` binds and resolves atomically, so concurrent reports for one tool never collide.
+- **Every 5xx status is now transient.** A server fault says nothing about whether the agent's
+  call was right. Previously 501, 505 and some other codes counted as `unknown` (weight 0.5).
 - **RelapseBench behavioural results on 8 hosted models**, in `docs/results/models/`. The study
   code is `scripts/model_study.py` and `scripts/model_report.py`.
   - The behavioural scorer now judges which rule a call follows, ignoring formatting. For example,

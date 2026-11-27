@@ -110,6 +110,7 @@ class Episode:
         ranked = self.memory.retriever.rank(query, items, k)
         hits = [Hit(item, float(score), rank) for rank, (item, score) in enumerate(ranked)]
         with self._lock:
+            self._ensure_open()
             for h in hits:
                 self._labile[h.item.id] = h.item
         self.store.add_retrievals(self.id, query, [(h.item.id, h.item.version, h.rank, h.score) for h in hits])
@@ -125,6 +126,7 @@ class Episode:
         if item.archived:
             raise NotFoundError(f"{item.ref} is archived")
         with self._lock:
+            self._ensure_open()
             self._labile[item.id] = item
         self.store.add_retrievals(self.id, f"use:{item.ref}", [(item.id, item.version, 0, 1.0)])
         self.memory._emit("recall", episode_id=self.id, item_id=item.id, version=item.version,
@@ -176,6 +178,7 @@ class Episode:
         self._ensure_open()
         item_id = self._item_id(target)
         with self._lock:
+            self._ensure_open()
             if item_id not in self._labile:
                 raise NotLabileError(
                     f"{target!r} was not recalled in episode {self.id}; call recall() or use() first. "
@@ -227,6 +230,9 @@ class Episode:
         """
         self._ensure_open()
         with self._lock:
+            # Re-checked under the lock close() takes: a close that lands between the check
+            # above and here must win, or a rewrite could commit after the episode re-locked.
+            self._ensure_open()
             exp = self._expectation(expectation)
             if exp.id in self._resolved:
                 raise RelockError(f"expectation {exp.id} was already observed")
@@ -480,13 +486,15 @@ class Episode:
         Returns one observation per resolved expectation, or none if no recalled item governs
         the tool.
         """
-        self._ensure_open()
-        exps = self._bind_tool(tool, list(items) if items else None)
-        if signal is not None:
-            return [self.observe(e, signal=signal) for e in exps]
-        if error is not None:
-            return [self.observe(e, error=error) for e in exps]
-        return [self.observe(e, result) for e in exps]
+        with self._lock:  # bind and resolve atomically, so concurrent reports never collide
+            self._ensure_open()
+            exps = self._bind_tool(tool, list(items) if items else None)
+            args = () if result is None else (result,)
+            if signal is not None:
+                return [self.observe(e, *args, signal=signal) for e in exps]
+            if error is not None:
+                return [self.observe(e, *args, error=error) for e in exps]
+            return [self.observe(e, result) for e in exps]
 
     def _bind_tool(self, tool: str, refs: list[str] | None) -> list[Expectation]:
         """Expectations a wrapped tool call should resolve (explicit ones first, else automatic)."""

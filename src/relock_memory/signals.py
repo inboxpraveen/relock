@@ -253,7 +253,7 @@ class TransientToolError(ToolError):
 
 
 # ---------------------------------------------------------------------- taxonomy
-_TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504, 507, 520, 521, 522, 523, 524, 529}
+_TRANSIENT_STATUS = {408, 425, 429, *range(500, 600)}  # every 5xx: a server fault says nothing about the call
 _PROGRAMMATIC_STATUS = {400, 401, 403, 404, 405, 406, 409, 410, 411, 412, 413, 414, 415, 416, 422}
 
 _TRANSIENT_NAME_HINTS = (

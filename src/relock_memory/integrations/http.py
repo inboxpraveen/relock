@@ -22,6 +22,7 @@ import ipaddress
 import json
 import logging
 import re
+import signal as _signal
 import threading
 import time
 from collections.abc import Callable
@@ -47,6 +48,8 @@ from ..types import (
 log = logging.getLogger("relock.http")
 
 MAX_BODY = 1 << 20  # 1 MiB
+SOCKET_TIMEOUT = 30.0  # seconds a connection may sit idle or stall mid-request
+MAX_CONNECTIONS = 256  # connections served at once; more wait in the listen backlog
 
 
 class ApiError(Exception):
@@ -68,30 +71,55 @@ class Service:
         self.k = k
         self._eps: dict[str, list[Any]] = {}  # id -> [episode, last_used, busy]
         self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._sweeper: threading.Thread | None = None
 
     # ---- episode registry
+    def _expired(self, last: float, busy: int) -> bool:
+        return bool(self.idle_timeout) and busy == 0 and last < time.monotonic() - (self.idle_timeout or 0)
+
     def _sweep(self) -> None:
         if not self.idle_timeout:
             return
-        cutoff = time.monotonic() - self.idle_timeout
         with self._lock:
-            stale = [eid for eid, (ep, last, busy) in self._eps.items() if busy == 0 and last < cutoff]
+            stale = [eid for eid, (_, last, busy) in self._eps.items() if self._expired(last, busy)]
             eps = [self._eps.pop(eid)[0] for eid in stale]
         for ep in eps:
-            try:
-                ep.close()
-                log.info("re-locked idle episode %s", ep.id)
-            except Exception:  # pragma: no cover - closing must never break a request
-                log.exception("failed to close idle episode %s", ep.id)
+            self._relock(ep)
+
+    @staticmethod
+    def _relock(ep: Episode) -> None:
+        try:
+            ep.close()
+            log.info("re-locked idle episode %s", ep.id)
+        except Exception:  # pragma: no cover - closing must never break a request
+            log.exception("failed to close idle episode %s", ep.id)
+
+    def start_sweeper(self) -> None:
+        """Re-lock idle episodes in the background, even ones no request touches again."""
+        if not self.idle_timeout or self._sweeper is not None:
+            return
+        interval = max(0.05, min(60.0, self.idle_timeout / 4))
+
+        def loop() -> None:
+            while not self._stop.wait(interval):
+                self._sweep()
+        self._sweeper = threading.Thread(target=loop, name="relock-sweeper", daemon=True)
+        self._sweeper.start()
 
     def _use(self, eid: str) -> Episode:
+        expired = None
         with self._lock:
             entry = self._eps.get(eid)
-            if entry is None:
-                raise ApiError(404, f"no open episode {eid!r} (closed, idle-expired or unknown)", "episode_not_found")
-            entry[1] = time.monotonic()
-            entry[2] += 1
-            return entry[0]
+            if entry is not None and self._expired(entry[1], entry[2]):
+                expired, entry = self._eps.pop(eid)[0], None
+            if entry is not None:
+                entry[1] = time.monotonic()
+                entry[2] += 1
+                return entry[0]
+        if expired is not None:
+            self._relock(expired)
+        raise ApiError(404, f"no open episode {eid!r} (closed, idle-expired or unknown)", "episode_not_found")
 
     def _release(self, eid: str) -> None:
         with self._lock:
@@ -118,7 +146,7 @@ class Service:
             _str(body, "title"), _str_list(body, "clauses"), key=_opt_str(body, "key"),
             kind=_opt_str(body, "kind") or "procedure", tags=_str_list(body, "tags", required=False),
             tools=_str_list(body, "tools", required=False), meta=_opt_dict(body, "meta"),
-            exist_ok=bool(body.get("exist_ok", False)), author=_opt_str(body, "author") or "api")
+            exist_ok=_opt_bool(body, "exist_ok", False), author=_opt_str(body, "author") or "api")
         return item_json(item)
 
     def list_items(self) -> dict[str, Any]:
@@ -170,14 +198,13 @@ class Service:
         tool, signal = _str(body, "tool"), signal_from(body)
         items = _str_list(body, "items", required=False) or None
         result = body.get("result")
-        obs = self.with_episode(
-            eid, lambda ep: ep.tool_result(tool, result, signal=None if signal.passed else signal, items=items))
+        obs = self.with_episode(eid, lambda ep: ep.tool_result(tool, result, signal=signal, items=items))
         return {"observations": [obs_json(o) for o in obs]}
 
     def correct(self, eid: str, body: dict[str, Any]) -> dict[str, Any]:
         item, correction = _str(body, "item"), _str(body, "correction")
         clauses = _str_list(body, "clauses", required=False) or None
-        authenticated = bool(body.get("authenticated", False))
+        authenticated = _opt_bool(body, "authenticated", False)
         principal = _opt_str(body, "principal")
         return obs_json(self.with_episode(eid, lambda ep: ep.correct(
             item, correction, principal=principal, authenticated=authenticated, clauses=clauses)))
@@ -190,6 +217,7 @@ class Service:
         return entry[0].close()
 
     def close_all(self) -> None:
+        self._stop.set()
         with self._lock:
             eps = [e[0] for e in self._eps.values()]
             self._eps.clear()
@@ -214,24 +242,30 @@ def signal_from(body: dict[str, Any]) -> Signal:
     ok = body.get("ok")
     if not isinstance(ok, bool):
         raise ApiError(400, "'ok' must be true or false")
-    source = (body.get("source") or "tool").lower()
+    source = body.get("source", "tool")
+    if not isinstance(source, str):
+        raise ApiError(400, "'source' must be a string")
+    source = source.lower()
     err = body.get("error") or {}
     if isinstance(err, str):
         err = {"message": err}
     if not isinstance(err, dict):
         raise ApiError(400, "'error' must be an object or a string")
-    message = str(err.get("message") or "")
-    correction = err.get("correction")
-    if correction is not None and not isinstance(correction, str):
-        raise ApiError(400, "'error.correction' must be a string")
+    message = _opt_str(err, "message", "error.message") or ""
+    correction = _opt_str(err, "correction", "error.correction")
+    status = err.get("status")
+    if status is not None and (not isinstance(status, int) or isinstance(status, bool)
+                               or not 100 <= status <= 599):
+        raise ApiError(400, "'error.status' must be an integer HTTP status (100-599)")
+    transient = _opt_bool(err, "transient", False, "error.transient")
+    detail_trusted = _opt_bool(err, "detail_trusted", True, "error.detail_trusted")
     if source == "tool":
         if ok:
             return Signal.ok()
-        status = err.get("status")
-        if err.get("transient") or (isinstance(status, int) and status in _TRANSIENT_STATUS):
+        if transient or status in _TRANSIENT_STATUS:
             return Signal.transient(message or "transient failure", status=status)
-        cls = err.get("class")
-        if cls is None and isinstance(status, int) and status in _PROGRAMMATIC_STATUS:
+        cls = _opt_str(err, "class", "error.class")
+        if cls is None and status in _PROGRAMMATIC_STATUS:
             cls = ErrorClass.PROGRAMMATIC
         try:
             error_class = ErrorClass(cls) if cls else None
@@ -239,7 +273,7 @@ def signal_from(body: dict[str, Any]) -> Signal:
             raise ApiError(400, f"unknown error class {cls!r}; use one of "
                                 f"{[c.value for c in ErrorClass]}") from None
         return Signal.tool_error(message or "tool failed", error_class=error_class, correction=correction,
-                                 detail_trusted=bool(err.get("detail_trusted", True)), status=status)
+                                 detail_trusted=detail_trusted, status=status)
     if source == "verifier":
         return Signal.verifier(ok, message, correction=correction, name=_opt_str(body, "verifier"))
     if source == "agent":
@@ -257,12 +291,22 @@ def _str(body: dict[str, Any], name: str) -> str:
     return v
 
 
-def _opt_str(body: dict[str, Any], name: str) -> str | None:
+def _opt_str(body: dict[str, Any], name: str, label: str | None = None) -> str | None:
     v = body.get(name)
     if v is None:
         return None
     if not isinstance(v, str):
-        raise ApiError(400, f"'{name}' must be a string")
+        raise ApiError(400, f"'{label or name}' must be a string")
+    return v
+
+
+def _opt_bool(body: dict[str, Any], name: str, default: bool, label: str | None = None) -> bool:
+    """A JSON boolean, strictly: "false" or 0 is rejected, never read as truthy."""
+    v = body.get(name)
+    if v is None:
+        return default
+    if not isinstance(v, bool):
+        raise ApiError(400, f"'{label or name}' must be true or false")
     return v
 
 
@@ -336,6 +380,7 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
     class Handler(BaseHTTPRequestHandler):
         server_version = f"relock/{__version__}"
         protocol_version = "HTTP/1.1"
+        timeout = SOCKET_TIMEOUT  # idle keep-alive and stalled clients are disconnected
 
         def log_message(self, fmt: str, *args: Any) -> None:  # route access logs to logging
             log.debug("%s - %s", self.address_string(), fmt % args)
@@ -352,23 +397,70 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
         def _error(self, status: int, code: str, message: str) -> None:
             self._send(status, {"error": {"code": code, "message": message}})
 
-        def _dispatch(self, method: str) -> None:
-            path = urlsplit(self.path)
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                return self._error(400, "bad_request", "invalid Content-Length")
+        def _fail(self, status: int, code: str, message: str) -> None:
+            """Answer and drop the connection: the request's framing can't be trusted."""
+            self.close_connection = True
+            self._error(status, code, message)
+
+        def _read_body(self) -> bytes | None:
+            """The request body, or None after answering an error. Never reads past MAX_BODY."""
+            te = self.headers.get("Transfer-Encoding")
+            cl = self.headers.get("Content-Length")
+            if te is not None:
+                if cl is not None:
+                    self._fail(400, "bad_request", "both Transfer-Encoding and Content-Length")
+                    return None
+                if te.strip().lower() != "chunked":
+                    self._fail(501, "not_implemented", f"unsupported Transfer-Encoding {te!r}")
+                    return None
+                return self._read_chunked()
+            if cl is None or not cl.strip():
+                return b""
+            if not cl.strip().isdigit():
+                self._fail(400, "bad_request", "invalid Content-Length")
+                return None
+            length = int(cl)
             if length > MAX_BODY:
-                # Drain a moderately oversized body so the client reads the 413 instead of a reset.
+                # Drain a moderately oversized body so the client reads the 413, not a reset.
                 if length <= 8 * MAX_BODY:
                     while length > 0:
                         chunk = self.rfile.read(min(length, 1 << 16))
                         if not chunk:
                             break
                         length -= len(chunk)
-                self.close_connection = True
-                return self._error(413, "too_large", f"request body over {MAX_BODY} bytes")
-            raw = self.rfile.read(length) if length else b""
+                self._fail(413, "too_large", f"request body over {MAX_BODY} bytes")
+                return None
+            return self.rfile.read(length) if length else b""
+
+        def _read_chunked(self) -> bytes | None:
+            out = bytearray()
+            while True:
+                line = self.rfile.readline(1024)
+                size_s = line.split(b";", 1)[0].strip()
+                if not line.endswith(b"\n") or not size_s or any(c not in b"0123456789abcdefABCDEF" for c in size_s):
+                    self._fail(400, "bad_request", "malformed chunked body")
+                    return None
+                size = int(size_s, 16)
+                if size == 0:
+                    for _ in range(64):  # trailer fields, then the blank line
+                        if self.rfile.readline(1024) in (b"\r\n", b"\n", b""):
+                            return bytes(out)
+                    self._fail(400, "bad_request", "too many trailer fields")
+                    return None
+                if len(out) + size > MAX_BODY:
+                    self._fail(413, "too_large", f"request body over {MAX_BODY} bytes")
+                    return None
+                data = self.rfile.read(size)
+                if len(data) < size or self.rfile.readline(4) not in (b"\r\n", b"\n"):
+                    self._fail(400, "bad_request", "malformed chunked body")
+                    return None
+                out += data
+
+        def _dispatch(self, method: str) -> None:
+            path = urlsplit(self.path)
+            raw = self._read_body()
+            if raw is None:
+                return None
             if token and path.path not in PUBLIC:
                 given = self.headers.get("Authorization", "")
                 if not (given.startswith("Bearer ") and hmac.compare_digest(given[7:].encode(), token.encode())):
@@ -388,6 +480,8 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
                     out = fn(m.groupdict(), body, parse_qs(path.query))
                 except json.JSONDecodeError as e:
                     return self._error(400, "bad_json", f"invalid JSON: {e}")
+                except RecursionError:
+                    return self._error(400, "bad_json", "JSON nested too deeply")
                 except ApiError as e:
                     return self._error(e.status, e.code, str(e))
                 except NotFoundError as e:
@@ -414,6 +508,31 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
     return Handler
 
 
+class _Server(ThreadingHTTPServer):
+    """A thread per connection, at most ``max_connections`` at once (the rest wait to be accepted)."""
+
+    daemon_threads = True
+
+    def __init__(self, addr: tuple[str, int], handler: type[BaseHTTPRequestHandler], *,
+                 max_connections: int = MAX_CONNECTIONS) -> None:
+        self._slots = threading.BoundedSemaphore(max_connections)
+        super().__init__(addr, handler)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        self._slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def _is_loopback(host: str) -> bool:
     if host == "localhost":
         return True
@@ -424,24 +543,37 @@ def _is_loopback(host: str) -> bool:
 
 
 def make_server(memory: Memory, host: str = "127.0.0.1", port: int = 8765, *, token: str | None = None,
-                idle_timeout: float | None = 1800.0, k: int = 3) -> tuple[ThreadingHTTPServer, Service]:
-    """Build (but don't start) the server. Refuses a non-loopback bind without a token."""
+                idle_timeout: float | None = 1800.0, k: int = 3, max_connections: int = MAX_CONNECTIONS,
+                ) -> tuple[ThreadingHTTPServer, Service]:
+    """Build (but don't start) the server; idle episodes are swept in the background.
+
+    Refuses a non-loopback bind without a token.
+    """
     if not token and not _is_loopback(host):
         raise ValueError(f"refusing to listen on {host!r} without a token: set RELOCK_TOKEN "
                          "(anyone who can reach this port could rewrite your agent's memory)")
     svc = Service(memory, idle_timeout=idle_timeout, k=k)
-    server = ThreadingHTTPServer((host, port), make_handler(svc, token))
-    server.daemon_threads = True
+    server = _Server((host, port), make_handler(svc, token), max_connections=max_connections)
+    svc.start_sweeper()
     return server, svc
 
 
 def serve(db: str | None = None, *, host: str = "127.0.0.1", port: int = 8765, token: str | None = None,
           rewriter: Any = None, idle_timeout: float | None = 1800.0, k: int = 3) -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     memory = Memory(db, rewriter=rewriter)
     server, svc = make_server(memory, host, port, token=token, idle_timeout=idle_timeout, k=k)
     where = f"http://{host}:{server.server_address[1]}"
     print(f"relock {__version__} serving {where}/v1 (OpenAPI: {where}/v1/openapi.json)"
           f"{'' if token else ' - no token: loopback only'}", flush=True)
+
+    def _terminate(*_: Any) -> None:  # docker stop / systemd: re-lock and close cleanly
+        raise KeyboardInterrupt
+    try:
+        _signal.signal(_signal.SIGTERM, _terminate)
+    except ValueError:  # pragma: no cover - not the main thread
+        pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -512,8 +644,9 @@ def openapi() -> dict[str, Any]:
                     "message": S,
                     "correction": {**S, "description": "The rule that would have been right, e.g. "
                                                         "'Pass dates as YYYY-MM-DD.' Drives the rewrite."},
-                    "status": {"type": "integer", "description": "HTTP status of the failed call, if any. "
-                                                                 "408/425/429/5xx count as transient."},
+                    "status": {"type": "integer", "minimum": 100, "maximum": 599,
+                               "description": "HTTP status of the failed call, if any. "
+                                              "408/425/429/5xx count as transient."},
                     "transient": {"type": "boolean", "description": "Timeouts, rate limits: never rewrite."},
                     "class": {"type": "string", "enum": [c.value for c in ErrorClass]},
                     "detail_trusted": {"type": "boolean", "default": True,

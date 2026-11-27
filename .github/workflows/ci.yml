@@ -122,9 +122,21 @@ jobs:
       - name: refuses to start publicly without a token
         run: |
           set +e
-          timeout 30 docker run --rm relock:ci
+          timeout 30 docker run --rm relock:ci 2> err.txt
           code=$?
+          cat err.txt
           test "$code" = "2" || { echo "expected exit 2 (refused), got $code"; exit 1; }
+          grep -q "refusing to listen" err.txt || { echo "exited 2 for another reason"; exit 1; }
+      - name: stops cleanly on SIGTERM
+        run: |
+          docker run -d --name stopper -e RELOCK_TOKEN=ci-token relock:ci
+          sleep 3
+          start=$(date +%s)
+          docker stop -t 20 stopper
+          took=$(( $(date +%s) - start ))
+          code=$(docker inspect stopper --format '{{.State.ExitCode}}')
+          echo "stopped in ${took}s with exit code $code"
+          test "$code" = "0" && test "$took" -lt 10
       - name: serves the API with a token
         run: |
           docker run -d --name relock -p 8765:8765 -e RELOCK_TOKEN=ci-token relock:ci

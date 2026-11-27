@@ -41,8 +41,10 @@ A failed call carries an error object:
 - **`correction`** is the rule that would have been right. When enough trusted evidence has
   accumulated (two failures by default), relock rewrites the clause that fired, in place. The
   old version is kept for audit and rollback, and is never retrieved again.
-- **Transient failures never rewrite memory.** These are `"status"` 408, 425, 429 or 5xx, or
-  `"transient": true`.
+- **Transient failures never rewrite memory.** These are `"status"` 408, 425, 429 or any 5xx,
+  or `"transient": true`.
+- **Who reported the outcome matters.** With `"source": "agent"` or `"environment"`, a failure is
+  logged but never rewrites, and a success never raises confidence or cancels trusted failures.
 - **`"detail_trusted": false`** is for a message that echoes remote content, such as a server's
   response body. The failure still counts, but its text never reaches the rewriter.
 
@@ -77,15 +79,25 @@ Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these stat
   the [MCP server](../README.md#mcp) instead. There, nothing the agent writes is trusted.
 - **Token:** set `RELOCK_TOKEN` to require `Authorization: Bearer <token>`. Without a token the
   server only binds to loopback; `relock serve --host 0.0.0.0` refuses to start.
-- **Idle episodes are re-locked** after 30 minutes (`--idle-timeout`). A crashed client can't
-  leave memory editable.
+- **Idle episodes are re-locked** after 30 minutes (`--idle-timeout`) by a background sweeper. A
+  crashed client can't leave memory editable.
+- **Strict JSON:** a field like `"authenticated": "false"` or `"status": "503"` is a `400`, never
+  read as true or as a number. A request can't change what it means by changing a type.
+- **No TLS:** the server speaks plain HTTP. Beyond loopback or a private network, put it behind a
+  reverse proxy that terminates TLS, so the token never crosses a network in clear text.
 
 ## Deployment
 
 - **Storage:** SQLite by default (`--db` or `RELOCK_DB`). For Postgres, set
   `RELOCK_DB=postgresql://...`; the image includes the driver.
-- **Concurrency:** requests run on threads. Writes use compare-and-swap, so concurrent rewrites
-  of the same item never lose an update; the later one becomes a `conflict`.
+- **Concurrency:** requests run on threads, serving up to 256 connections at once; more wait to
+  be accepted. A connection idle or stalled for 30 seconds is closed. Writes use compare-and-swap,
+  so concurrent rewrites of the same item never lose an update; the later one becomes a
+  `conflict`.
+- **Bodies:** `Content-Length` and chunked bodies are both accepted. A request carrying both
+  framings is refused.
+- **Shutdown:** on `SIGTERM` (for example `docker stop`) the server re-locks every open episode
+  and closes the database before exiting.
 - **Replicas:** open episodes live in the server process. With more than one replica on a shared
   Postgres database, send each episode's requests to the same replica, for example with sticky
   routing on the episode id.
