@@ -55,7 +55,7 @@ def rewrite_records(memory: Memory) -> Iterator[dict[str, Any]]:
 
 def export_jsonl(memory: Memory, path: str) -> int:
     n = 0
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         for rec in rewrite_records(memory):
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             n += 1

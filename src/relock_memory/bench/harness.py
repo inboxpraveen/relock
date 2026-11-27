@@ -53,7 +53,8 @@ LOADS: tuple[Load, ...] = (
 NOISE: tuple[str, ...] = ("success", "transient", "transient", "injection", "success", "noisy_trusted",
                           "success", "success")
 
-SYSTEM_NAMES = ("append-notes", "append-clause", "ace-style", "append-gated", "overwrite-ungated", "relock")
+SYSTEM_NAMES = ("append-notes", "append-clause", "ace-style", "append-gated", "overwrite-ungated",
+                "relock-uncited", "relock")
 
 
 @dataclass

@@ -103,9 +103,14 @@ class MemorySystem(Protocol):
 
 
 class RelockSystem:
+    """relock itself. ``cite=False`` mimics the plain ``@mem.wrap`` path: the tool outcome resolves an
+    automatic expectation that cites no clauses, so the rewriter (not the edit scope) has to find
+    the clause to change."""
+
     def __init__(self, name: str = "relock", policy: WritePolicy | None = None,
-                 rewriter: Rewriter | None = None) -> None:
+                 rewriter: Rewriter | None = None, *, cite: bool = True) -> None:
         self.name = name
+        self.cite = cite
         self.mem = Memory(":memory:", policy=policy or WritePolicy(), rewriter=rewriter or HintRewriter())
         self._drift: dict[str, str] = {}
 
@@ -122,8 +127,8 @@ class RelockSystem:
             hits = ep.recall(family.query, k=5)
             if family.key not in {h.item.key for h in hits}:
                 ep.use(family.key)  # the agent loaded the procedure by name
-            exp = ep.expect(family.key, f"{family.tool} accepts the call", clauses=[self._drift[family.key]],
-                            tool=family.tool)
+            cited = [self._drift[family.key]] if self.cite else None
+            exp = ep.expect(family.key, f"{family.tool} accepts the call", clauses=cited, tool=family.tool)
             ep.observe(exp, signal=to_signal(ev))
 
     def context(self, family: Family, *, k: int, budget_tokens: int) -> str:
@@ -281,6 +286,7 @@ SYSTEMS: dict[str, Callable[[], MemorySystem]] = {
     "ace-style": ACEStyle,
     "append-gated": AppendGated,
     "overwrite-ungated": lambda: RelockSystem("overwrite-ungated", policy=WritePolicy.permissive()),
+    "relock-uncited": lambda: RelockSystem("relock-uncited", cite=False),
     "relock": RelockSystem,
 }
 
@@ -290,6 +296,8 @@ def make_system(name: str, *, rewriter: Rewriter | None = None) -> MemorySystem:
         return RelockSystem(rewriter=rewriter)
     if name == "overwrite-ungated":
         return RelockSystem("overwrite-ungated", policy=WritePolicy.permissive(), rewriter=rewriter)
+    if name == "relock-uncited":
+        return RelockSystem("relock-uncited", rewriter=rewriter, cite=False)
     try:
         return SYSTEMS[name]()
     except KeyError:

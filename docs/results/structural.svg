@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 310" width="704" height="310" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 334" width="704" height="334" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
 <title id="t">RelapseBench (structural): what reaches the agent&#x27;s memory context</title><desc id="d">Same feedback stream for every system: drift correction, flaky timeouts, a prompt injection, a noisy failure. 120 probes per system, all load levels pooled.</desc>
 <style>
 :root{--surface:#ffffff;--ink:#191919;--ink2:#666666;--grid:#e7e7e7;--axis:#c2c2c2;--accent:#257de0;--muted:#8c8c8c}
 @media (prefers-color-scheme: dark){:root{--surface:#191919;--ink:#efefef;--ink2:#9c9c9c;--grid:#303030;--axis:#474747;--accent:#338ced;--muted:#7a7a7a}}
 .bg{fill:var(--surface)} .t{fill:var(--ink);font-size:15px;font-weight:600} .s{fill:var(--ink2);font-size:12px} .p{fill:var(--ink);font-size:12px;font-weight:600} .l{fill:var(--ink);font-size:12px} .lh{fill:var(--ink);font-size:12px;font-weight:700} .v{fill:var(--ink2);font-size:11px;font-variant-numeric:tabular-nums} .vh{fill:var(--ink);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums} .g{stroke:var(--grid);stroke-width:1} .a{stroke:var(--axis);stroke-width:1} .bm{fill:var(--muted)} .bh{fill:var(--accent)} .tick{fill:var(--ink2);font-size:10px}
 </style>
-<rect class="bg" x="0" y="0" width="704" height="310" rx="8"/>
+<rect class="bg" x="0" y="0" width="704" height="334" rx="8"/>
 <text class="t" x="16" y="28">RelapseBench (structural): what reaches the agent&#x27;s memory context</text>
 <text class="s" x="16" y="48">Same feedback stream for every system: drift correction, flaky timeouts, a prompt injection, a noisy</text>
 <text class="s" x="16" y="64">failure. 120 probes per system, all load levels pooled.</text>
@@ -14,14 +14,15 @@
 <text class="l" x="122" y="167" text-anchor="end">ace-style</text>
 <text class="l" x="122" y="191" text-anchor="end">append-gated</text>
 <text class="l" x="122" y="215" text-anchor="end">overwrite-ungated</text>
-<text class="lh" x="122" y="239" text-anchor="end">relock</text>
+<text class="l" x="122" y="239" text-anchor="end">relock-uncited</text>
+<text class="lh" x="122" y="263" text-anchor="end">relock</text>
 <text class="p" x="132" y="86">Superseded rule in context</text>
-<line class="a" x1="132.0" y1="100" x2="132.0" y2="246"/>
-<text class="tick" x="132.0" y="262" text-anchor="middle">0%</text>
-<line class="g" x1="196.0" y1="100" x2="196.0" y2="246"/>
-<text class="tick" x="196.0" y="262" text-anchor="middle">50%</text>
-<line class="g" x1="260.0" y1="100" x2="260.0" y2="246"/>
-<text class="tick" x="260.0" y="262" text-anchor="middle">100%</text>
+<line class="a" x1="132.0" y1="100" x2="132.0" y2="270"/>
+<text class="tick" x="132.0" y="286" text-anchor="middle">0%</text>
+<line class="g" x1="196.0" y1="100" x2="196.0" y2="270"/>
+<text class="tick" x="196.0" y="286" text-anchor="middle">50%</text>
+<line class="g" x1="260.0" y1="100" x2="260.0" y2="270"/>
+<text class="tick" x="260.0" y="286" text-anchor="middle">100%</text>
 <g><title>append-notes - Superseded rule in context: 68%</title>
 <path class="bm" d="M132,108 h82.40 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-82.40 z"/>
 <text class="v" x="223.4" y="119">68%</text></g>
@@ -36,15 +37,17 @@
 <text class="v" x="265.0" y="191">100%</text></g>
 <g><title>overwrite-ungated - Superseded rule in context: 0%</title>
 <text class="v" x="137.0" y="215">0%</text></g>
+<g><title>relock-uncited - Superseded rule in context: 0%</title>
+<text class="v" x="137.0" y="239">0%</text></g>
 <g><title>relock - Superseded rule in context: 0%</title>
-<text class="vh" x="137.0" y="239">0%</text></g>
+<text class="vh" x="137.0" y="263">0%</text></g>
 <text class="p" x="322" y="86">Poisoned rule in context</text>
-<line class="a" x1="322.0" y1="100" x2="322.0" y2="246"/>
-<text class="tick" x="322.0" y="262" text-anchor="middle">0%</text>
-<line class="g" x1="386.0" y1="100" x2="386.0" y2="246"/>
-<text class="tick" x="386.0" y="262" text-anchor="middle">50%</text>
-<line class="g" x1="450.0" y1="100" x2="450.0" y2="246"/>
-<text class="tick" x="450.0" y="262" text-anchor="middle">100%</text>
+<line class="a" x1="322.0" y1="100" x2="322.0" y2="270"/>
+<text class="tick" x="322.0" y="286" text-anchor="middle">0%</text>
+<line class="g" x1="386.0" y1="100" x2="386.0" y2="270"/>
+<text class="tick" x="386.0" y="286" text-anchor="middle">50%</text>
+<line class="g" x1="450.0" y1="100" x2="450.0" y2="270"/>
+<text class="tick" x="450.0" y="286" text-anchor="middle">100%</text>
 <g><title>append-notes - Poisoned rule in context: 89%</title>
 <path class="bm" d="M322,108 h110.13 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-110.13 z"/>
 <text class="v" x="441.1" y="119">89%</text></g>
@@ -59,15 +62,17 @@
 <g><title>overwrite-ungated - Poisoned rule in context: 100%</title>
 <path class="bm" d="M322,204 h124.00 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-124.00 z"/>
 <text class="v" x="455.0" y="215">100%</text></g>
+<g><title>relock-uncited - Poisoned rule in context: 0%</title>
+<text class="v" x="327.0" y="239">0%</text></g>
 <g><title>relock - Poisoned rule in context: 0%</title>
-<text class="vh" x="327.0" y="239">0%</text></g>
+<text class="vh" x="327.0" y="263">0%</text></g>
 <text class="p" x="512" y="86">Only the correction in context</text>
-<line class="a" x1="512.0" y1="100" x2="512.0" y2="246"/>
-<text class="tick" x="512.0" y="262" text-anchor="middle">0%</text>
-<line class="g" x1="576.0" y1="100" x2="576.0" y2="246"/>
-<text class="tick" x="576.0" y="262" text-anchor="middle">50%</text>
-<line class="g" x1="640.0" y1="100" x2="640.0" y2="246"/>
-<text class="tick" x="640.0" y="262" text-anchor="middle">100%</text>
+<line class="a" x1="512.0" y1="100" x2="512.0" y2="270"/>
+<text class="tick" x="512.0" y="286" text-anchor="middle">0%</text>
+<line class="g" x1="576.0" y1="100" x2="576.0" y2="270"/>
+<text class="tick" x="576.0" y="286" text-anchor="middle">50%</text>
+<line class="g" x1="640.0" y1="100" x2="640.0" y2="270"/>
+<text class="tick" x="640.0" y="286" text-anchor="middle">100%</text>
 <g><title>append-notes - Only the correction in context: 0%</title>
 <text class="v" x="517.0" y="119">0%</text></g>
 <g><title>append-clause - Only the correction in context: 0%</title>
@@ -78,8 +83,11 @@
 <text class="v" x="517.0" y="191">0%</text></g>
 <g><title>overwrite-ungated - Only the correction in context: 0%</title>
 <text class="v" x="517.0" y="215">0%</text></g>
+<g><title>relock-uncited - Only the correction in context: 100%</title>
+<path class="bm" d="M512,228 h124.00 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-124.00 z"/>
+<text class="v" x="645.0" y="239">100%</text></g>
 <g><title>relock - Only the correction in context: 100%</title>
-<path class="bh" d="M512,228 h124.00 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-124.00 z"/>
-<text class="vh" x="645.0" y="239">100%</text></g>
-<text class="s" x="16" y="298">Model-free measurement of memory contents, not of model behaviour. Tables: structural.md</text>
+<path class="bh" d="M512,252 h124.00 a4.0,4.0 0 0 1 4.0,4.0 v6.0 a4.0,4.0 0 0 1 -4.0,4.0 h-124.00 z"/>
+<text class="vh" x="645.0" y="263">100%</text></g>
+<text class="s" x="16" y="322">Model-free measurement of memory contents, not of model behaviour. Tables: structural.md</text>
 </svg>

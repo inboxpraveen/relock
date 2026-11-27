@@ -20,6 +20,7 @@ Cells are counts over families x seeds. Seeds only re-sample the distractor item
 | ace-style | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | append-gated | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | overwrite-ungated | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
+| relock-uncited | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 | relock | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 
 ### Poisoned rule in context
@@ -31,6 +32,7 @@ Cells are counts over families x seeds. Seeds only re-sample the distractor item
 | ace-style | 100% (30/30) | 100% (30/30) | 100% (30/30) | 80% (24/30) |
 | append-gated | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 | overwrite-ungated | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
+| relock-uncited | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 | relock | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 
 ### Conflicting rules in context
@@ -42,6 +44,7 @@ Cells are counts over families x seeds. Seeds only re-sample the distractor item
 | ace-style | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | append-gated | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | overwrite-ungated | 10% (3/30) | 10% (3/30) | 10% (3/30) | 10% (3/30) |
+| relock-uncited | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 | relock | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 
 ### Correction in context
@@ -53,6 +56,7 @@ Cells are counts over families x seeds. Seeds only re-sample the distractor item
 | ace-style | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | append-gated | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | overwrite-ungated | 10% (3/30) | 10% (3/30) | 10% (3/30) | 10% (3/30) |
+| relock-uncited | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | relock | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 
 ### Only the correction in context
@@ -64,6 +68,7 @@ Cells are counts over families x seeds. Seeds only re-sample the distractor item
 | ace-style | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 | append-gated | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
 | overwrite-ungated | 0% (0/30) | 0% (0/30) | 0% (0/30) | 0% (0/30) |
+| relock-uncited | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 | relock | 100% (30/30) | 100% (30/30) | 100% (30/30) | 100% (30/30) |
 
 ### Learning cost (trusted errors before the correction took effect)
@@ -75,4 +80,5 @@ Cells are counts over families x seeds. Seeds only re-sample the distractor item
 | ace-style | 1.00 (100% learned) | 1.00 (100% learned) | 1.00 (100% learned) | 1.00 (100% learned) |
 | append-gated | 2.00 (100% learned) | 2.00 (100% learned) | 2.00 (100% learned) | 2.00 (100% learned) |
 | overwrite-ungated | 1.00 (100% learned) | 1.00 (100% learned) | 1.00 (100% learned) | 1.00 (100% learned) |
+| relock-uncited | 2.00 (100% learned) | 2.00 (100% learned) | 2.00 (100% learned) | 2.00 (100% learned) |
 | relock | 2.00 (100% learned) | 2.00 (100% learned) | 2.00 (100% learned) | 2.00 (100% learned) |

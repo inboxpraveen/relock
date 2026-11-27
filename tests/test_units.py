@@ -80,8 +80,9 @@ def test_policy_admission():
     assert p.admit(rl.Signal.tool_error(ValueError("x"))).counts
     assert not p.admit(rl.Signal.transient()).counts
     assert not p.admit(rl.Signal.observation("x")).counts
-    assert p.admit(rl.Signal.user("x")).authoritative
+    assert p.admit(rl.Signal.user("x", authenticated=True)).authoritative
     assert not p.admit(rl.Signal.user("x", authenticated=False)).counts
+    assert not p.admit(rl.Signal.user("x")).counts  # must be vouched for explicitly
     assert rl.WritePolicy.trust_agent().admit(rl.Signal.agent_report(False, "x")).counts
     assert rl.WritePolicy.permissive().admit(rl.Signal.transient()).counts
     assert p.admit(rl.Signal.tool_error("weird")).weight == 0.5
@@ -308,3 +309,11 @@ def test_events_and_stats(mem, orders):
     types = [e["type"] for e in seen]
     assert types[0] == "episode_open" and "recall" in types and types[-1] == "relock"
     assert m.stats()["episodes"] >= 1
+
+
+def test_ids_are_unique_and_sort_in_creation_order():
+    from relock_memory._util import new_id
+
+    ids = [new_id("x") for _ in range(20000)]  # many share a millisecond
+    assert len(set(ids)) == len(ids)
+    assert ids == sorted(ids)

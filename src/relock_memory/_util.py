@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -20,11 +21,26 @@ def _b32(n: int, width: int) -> str:
     return "".join(reversed(out))
 
 
+_id_lock = threading.Lock()
+_id_last = [0, 0]  # (ms, low bits) of the previous id
+
+
 def new_id(prefix: str) -> str:
-    """Time-sortable, collision-resistant id such as ``itm_01jd3k...``."""
-    ms = time.time_ns() // 1_000_000
-    rand = int.from_bytes(os.urandom(8), "big")
-    return f"{prefix}_{_b32(ms, 10)}{_b32(rand, 10)}"
+    """Time-sortable, collision-resistant id such as ``itm_01jd3k...``.
+
+    Monotonic within a process (ULID-style): ids created in the same millisecond, or
+    while the clock steps backwards, increment the previous id's low bits instead of
+    drawing new random ones. Sorting by id is therefore creation order, which keeps
+    retrieval tie-breaks reproducible.
+    """
+    with _id_lock:
+        ms = time.time_ns() // 1_000_000
+        if ms <= _id_last[0]:
+            ms, low = _id_last[0], _id_last[1] + 1
+        else:
+            low = int.from_bytes(os.urandom(7), "big") >> 7  # 49 random bits; headroom for increments
+        _id_last[0], _id_last[1] = ms, low
+    return f"{prefix}_{_b32(ms, 10)}{_b32(low, 10)}"
 
 
 def now() -> str:

@@ -199,13 +199,13 @@ def write_report(out_dir: str, records: Sequence[Record], cfg: Config, mode: str
         "aggregate": aggregate(records),
         "records": [asdict(r) for r in records],
     }
-    with open(paths["json"], "w", encoding="utf-8") as f:
+    with open(paths["json"], "w", encoding="utf-8", newline="\n") as f:
         json.dump(payload, f, indent=1)
     md = markdown(records, cfg, mode, agent_name)
     if pipeline_test:
         md = ("> **Pipeline test only.** These numbers come from a scripted stand-in agent, not a model. "
               "They show that the harness runs; they are not results.\n\n" + md)
-    with open(paths["md"], "w", encoding="utf-8") as f:
+    with open(paths["md"], "w", encoding="utf-8", newline="\n") as f:
         f.write(md)
 
     n_probes = len({(r.seed, r.load, r.family, r.probe) for r in records})
@@ -226,6 +226,6 @@ def write_report(out_dir: str, records: Sequence[Record], cfg: Config, mode: str
         title = f"RelapseBench (behavioural): relapse to the old rule under load - {agent_name}"
         sub = f"Fraction of probes where the agent followed the superseded rule. {n_probes} probes per system."
         foot = "Pipeline test with a scripted agent - not a result." if pipeline_test else "Tables: behavioral.md"
-    with open(paths["svg"], "w", encoding="utf-8") as f:
+    with open(paths["svg"], "w", encoding="utf-8", newline="\n") as f:
         f.write(svg_panels(title, sub, panels, systems, footnote=foot))
     return paths
