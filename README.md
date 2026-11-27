@@ -102,7 +102,7 @@ Unlock on recall, rewrite on surprise, re-lock.
 The idea comes from **memory reconsolidation** in neuroscience:
 - [Nader, Schafe and LeDoux (2000)](https://doi.org/10.1038/35021052) showed in rats that a fear
   memory becomes editable again for a short window after it is recalled.
-- [Sevenster, Beckers and Kindt (2013)](https://doi.org/10.1126/science.1231966) found, in people,
+- [Sevenster, Beckers and Kindt (2013)](https://doi.org/10.1126/science.1231357) found, in people,
   that the update needs a prediction error: the memory changes only when what happened differs from
   what it predicted.
 
