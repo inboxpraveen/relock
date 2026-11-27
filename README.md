@@ -1,5 +1,9 @@
 # relock
 
+[![ci](https://github.com/inboxpraveen/relock/actions/workflows/ci.yml/badge.svg)](https://github.com/inboxpraveen/relock/actions/workflows/ci.yml)
+[![python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 **Agent memory that unlocks on recall, rewrites on surprise, and re-locks.**
 
 Most agent memories fix a mistake by *appending* ("don't do X"). The old instruction stays
@@ -8,12 +12,13 @@ again. relock fixes the instruction that fired, in place, but only when a **trus
 that its prediction was wrong, and only while that memory is **reactivated**.
 
 ```
-git clone https://github.com/inboxpraveen/relock && cd relock
-pip install -e .                     # core: zero dependencies (SQLite + BM25 + stdlib HTTP)
-pip install -e ".[all]"              # + Postgres, MCP server, LangChain/LangGraph adapter
+pip install "relock-memory @ git+https://github.com/inboxpraveen/relock"        # core: zero dependencies
+pip install "relock-memory[all] @ git+https://github.com/inboxpraveen/relock"   # + Postgres, MCP, LangChain/LangGraph
 ```
 
-Once it is published to PyPI, this becomes `pip install relock-memory` (or `"relock-memory[all]"`).
+Wheels are attached to each [GitHub release](https://github.com/inboxpraveen/relock/releases).
+Once the package is on PyPI, the command becomes `pip install relock-memory` (or
+`"relock-memory[all]"`).
 The distribution is `relock-memory` and the import is `relock_memory`, because the PyPI name
 `relock` belongs to an unrelated SDK that also installs a top-level `relock` module.
 
@@ -333,6 +338,7 @@ ruff check src tests examples
 ```
 
 CI runs the suite on Python 3.10–3.13 against SQLite and Postgres. It also runs the MCP tests
-on the `mcp` 1.x line.
+on the `mcp` 1.x line. See [CONTRIBUTING.md](CONTRIBUTING.md) for the invariants a change must
+keep. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 Apache-2.0. See [LICENSE](LICENSE).

@@ -1,0 +1,62 @@
+# Contributing to relock
+
+Thanks for helping. Bug reports, integrations, benchmark runs and docs fixes are all welcome.
+
+## Setup
+
+```
+git clone https://github.com/inboxpraveen/relock && cd relock
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+pytest                                            # SQLite backends
+ruff check src tests examples
+```
+
+To include the Postgres backend in the test run:
+
+```
+docker run -d --rm --name relock-pg -p 127.0.0.1:55432:5432 \
+  -e POSTGRES_USER=relock -e POSTGRES_PASSWORD=relock -e POSTGRES_DB=relock postgres:17
+RELOCK_TEST_POSTGRES_URL=postgresql://relock:relock@127.0.0.1:55432/relock pytest
+```
+
+CI runs the same checks on Python 3.10–3.13, plus the MCP tests on the `mcp` 1.x line.
+
+## Invariants a change must keep
+
+relock is a write discipline. Most of its value is in what it refuses to do, so a pull request
+that weakens one of these needs a very good reason and a test:
+
+- Only items recalled in the current episode can be rewritten, and a closed episode accepts no writes.
+- Only trusted signals (tool, verifier, authenticated user) count as evidence. Transient errors never count.
+- Nothing an untrusted author writes reaches the rewriter or steers the edit. That covers the
+  agent's prediction text, its suggested corrections, the clause ids it cites, and
+  `detail_trusted=False` signal text.
+- There is exactly one active version per item. Old versions are superseded, never deleted.
+- Every gate decision is written to the event log.
+
+The [design doc](docs/design.md) has the full lifecycle and threat model.
+
+## Benchmark changes
+
+The structural RelapseBench mode is deterministic. If you change retrieval, the bench systems or
+the scenarios, regenerate the published tables with `relock bench --out docs/results` and
+commit them. CI fails when `docs/results/structural.md` no longer matches a fresh run.
+
+Behavioural results on real models are the most valuable contribution right now. Run
+`relock bench --mode behavioral --base-url ... --model ...` and open an issue or pull request with
+the generated `behavioral.json`, `behavioral.md` and the exact model, quantisation and serving
+stack you used.
+
+## Releases (maintainers)
+
+1. Bump `version` in `pyproject.toml` and `__version__` in `src/relock_memory/__init__.py`, and
+   date the entry in `CHANGELOG.md`.
+2. Create a GitHub release with the tag `vX.Y.Z`. The `release` workflow builds the sdist and
+   wheel, checks the version against the tag, and attaches the files to the release.
+3. PyPI publishing uses [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) and is
+   off until it is configured once:
+   - On PyPI, add a (pending) trusted publisher for project `relock-memory`: owner
+     `inboxpraveen`, repository `relock`, workflow `release.yml`, environment `pypi`.
+   - In the GitHub repository settings, set the Actions variable `PUBLISH_TO_PYPI` to `true`.
+   - Re-run the `release` workflow for the tag, or publish the next release.
