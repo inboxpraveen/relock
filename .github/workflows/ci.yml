@@ -126,8 +126,8 @@ jobs:
           timeout 30 docker run --rm relock:ci 2> err.txt
           code=$?
           cat err.txt
-          test "$code" = "2" || { echo "expected exit 2 (refused), got $code"; exit 1; }
-          grep -q "refusing to listen" err.txt || { echo "exited 2 for another reason"; exit 1; }
+          test "$code" = "1" || { echo "expected exit 1 (refused), got $code"; exit 1; }
+          grep -q "refusing to listen" err.txt || { echo "exited 1 for another reason"; exit 1; }
       - name: stops cleanly on SIGTERM
         run: |
           docker run -d --name stopper -e RELOCK_TOKEN=ci-token relock:ci
