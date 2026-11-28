@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.3.0)
+## 0.3.0 - 2026-11-28
 
 Production hardening: multi-agent attribution, storage robustness, scale, retention and logging.
 
