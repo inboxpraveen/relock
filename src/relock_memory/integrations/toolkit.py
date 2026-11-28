@@ -54,7 +54,12 @@ class Toolkit:
 
     # ------------------------------------------------------------------ episode plumbing
     def episode(self) -> Episode:
-        """The active episode (yours, if you opened one), else one the toolkit opens and owns."""
+        """The active episode if you opened one, else one this toolkit opens and owns.
+
+        Each toolkit owns its own episode, so two agents with their own toolkits never share
+        one. The toolkit's episode is made active in the calling context, so your wrapped tools
+        called next in the same thread or task are attributed to it.
+        """
         now = time.monotonic()
         idle = now - self._last_used
         self._last_used = now
@@ -62,24 +67,34 @@ class Toolkit:
                 and idle > self.idle_timeout):
             self._own.close()  # re-lock: whatever the client recalled before going quiet
         ep = self.memory.current_episode()
-        if ep is not None:
+        if ep is not None and ep._owner in (None, self):  # yours, or this toolkit's
             return ep
-        if self._own is None or self._own.closed:
-            self._own = self.memory.episode(self.task or "toolkit session")
-        return self._own
+        own = self._own if self._own is not None and not self._own.closed else self._open_own(
+            self.task or "toolkit session")
+        self.memory._ctx.set(own)
+        return own
+
+    def _open_own(self, task: str) -> Episode:
+        own = self.memory.episode(task)
+        own._owner = self
+        self._own = own
+        return own
 
     def begin_episode(self, task: str = "") -> str:
         """Start a fresh memory episode for a new task. Returns the episode id."""
         self.end_episode()
-        self._own = self.memory.episode(task or self.task or "toolkit session")
+        own = self._open_own(task or self.task or "toolkit session")
+        self.memory._ctx.set(own)
         self._last_used = time.monotonic()
-        return self._own.id
+        return own.id
 
     def end_episode(self) -> str:
         """Close the memory episode for the current task (re-lock). Returns a summary."""
         if self._own is not None and not self._own.closed:
-            summary = self._own.close()
-            self._own = None
+            own, self._own = self._own, None
+            summary = own.close()
+            if self.memory._ctx.get() is own:
+                self.memory._ctx.set(None)
             return json.dumps(summary)
         return "{}"
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 import contextvars
 import functools
 import inspect
+import logging
 import re
 import threading
+import weakref
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from typing import Any, TypeVar
@@ -22,6 +24,8 @@ from .stores import SQLStore, open_store
 from .types import Clause, ConflictError, Hit, Item, NotFoundError
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+log = logging.getLogger("relock_memory")
 
 _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 
@@ -76,8 +80,11 @@ class Memory:
         self.on_event = on_event
         self._ctx: contextvars.ContextVar[Episode | None] = contextvars.ContextVar(
             f"relock_episode_{id(self)}", default=None)
-        self._open: dict[str, Episode] = {}
+        # Weak references: an episode its caller dropped without closing can no longer write,
+        # so it must not linger here and keep counting as open.
+        self._open: weakref.WeakValueDictionary[str, Episode] = weakref.WeakValueDictionary()
         self._open_lock = threading.Lock()
+        self._unbound_warned: set[str] = set()
         self._cache: tuple[int, list[Item]] | None = None
         self._cache_lock = threading.Lock()
 
@@ -91,7 +98,9 @@ class Memory:
         self.close()
 
     def close(self) -> None:
-        for ep in list(self._open.values()):
+        with self._open_lock:
+            eps = list(self._open.values())
+        for ep in eps:
             ep.close()
         self.store.close()
 
@@ -121,6 +130,10 @@ class Memory:
     def _register(self, ep: Episode) -> None:
         with self._open_lock:
             self._open[ep.id] = ep
+            n = len(self._open)
+        if n >= 1000 and n % 1000 == 0:
+            log.warning("relock: %d episodes are open in this process. Close each one when its task ends "
+                        "(use `with mem.episode(...)`); open episodes keep their recalled items editable.", n)
 
     def _unregister(self, ep: Episode) -> None:
         with self._open_lock:
@@ -209,13 +222,27 @@ class Memory:
         return Episode(self, task, meta)
 
     def current_episode(self) -> Episode | None:
-        """The episode active in this context, or the only open one in this process."""
+        """The episode active in the current thread or asyncio task, if any.
+
+        An episode is active inside ``with mem.episode(...)``, inside ``with ep.activate():``,
+        during ``ep.run(fn, ...)``, and after a :class:`~relock_memory.integrations.toolkit.Toolkit`
+        call in the same context. Asyncio tasks inherit it. Plain worker threads do not: submit
+        work with ``ep.run`` or wrap it in ``ep.activate()``. There is deliberately no
+        process-wide fallback, so a tool call is never attributed to another agent's episode.
+        """
         ep = self._ctx.get()
-        if ep is not None and not ep.closed:
-            return ep
+        return ep if ep is not None and not ep.closed else None
+
+    def _note_unbound(self, tool: str) -> None:
+        """Warn (once per tool) when a wrapped tool runs outside any episode while some are open."""
         with self._open_lock:
-            open_eps = [e for e in self._open.values() if not e.closed]
-        return open_eps[0] if len(open_eps) == 1 else None
+            n = sum(1 for e in self._open.values() if not e.closed)
+            if not n or tool in self._unbound_warned:
+                return
+            self._unbound_warned.add(tool)
+        log.warning("relock: tool %r ran outside any episode while %d episode(s) are open in this process; "
+                    "its outcome was not recorded. Call it inside `with ep:` or `with ep.activate():`, "
+                    "or submit it to worker threads with `ep.run(fn, ...)`. (Logged once per tool.)", tool, n)
 
     # ------------------------------------------------------------------ admin edits
     def _commit_admin(self, current: Item, clauses: tuple[Clause, ...], seq: int, *, kind: str,
@@ -302,6 +329,8 @@ class Memory:
             @functools.wraps(fn)
             async def awrapper(*args: Any, **kwargs: Any) -> Any:
                 ep = memory.current_episode()
+                if ep is None:
+                    memory._note_unbound(tool)
                 exps = ep._bind_tool(tool, refs) if ep is not None else []
                 try:
                     result = await fn(*args, **kwargs)
@@ -319,6 +348,8 @@ class Memory:
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             ep = memory.current_episode()
+            if ep is None:
+                memory._note_unbound(tool)
             exps = ep._bind_tool(tool, refs) if ep is not None else []
             try:
                 result = fn(*args, **kwargs)

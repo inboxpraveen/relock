@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from collections import Counter
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -63,6 +65,7 @@ class Episode:
         self._rewrites: Counter[str] = Counter()
         self._declined: dict[str, tuple[str, ...]] = {}
         self._token: Any = None
+        self._owner: Any = None  # the Toolkit that opened this episode for itself, if any
         self.summary: dict[str, Any] = {}
         self.store.create_episode(self.id, task, self.meta)
         memory._register(self)
@@ -87,6 +90,28 @@ class Episode:
     def __repr__(self) -> str:
         state = "closed" if self.closed else "open"
         return f"Episode({self.id}, {state}, labile={sorted(i.ref for i in self._labile.values())})"
+
+    @contextlib.contextmanager
+    def activate(self) -> Iterator[Episode]:
+        """Make this the active episode in the current thread or task, without closing it on exit.
+
+        Wrapped tools find their episode through a context variable. Asyncio tasks inherit it,
+        but plain worker threads (``ThreadPoolExecutor``, ``threading.Thread``) start without it.
+        Wrap the work in ``with ep.activate():`` there, or submit it with :meth:`run`.
+        """
+        token = self.memory._ctx.set(self)
+        try:
+            yield self
+        finally:
+            try:
+                self.memory._ctx.reset(token)
+            except ValueError:  # reset from a different context
+                self.memory._ctx.set(None)
+
+    def run(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        """Call ``fn(*args, **kwargs)`` with this episode active: ``pool.submit(ep.run, tool, x)``."""
+        with self.activate():
+            return fn(*args, **kwargs)
 
     def _ensure_open(self) -> None:
         if self.closed:
