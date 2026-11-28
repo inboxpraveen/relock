@@ -144,6 +144,35 @@ def cmd_events(args: argparse.Namespace, mem: Memory) -> int:
     return 0
 
 
+def _age_arg(text: str) -> str:
+    from ._util import parse_age
+
+    try:
+        parse_age(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+    return text
+
+
+def cmd_prune(args: argparse.Namespace, mem: Memory) -> int:
+    counts = mem.prune(args.older_than, dry_run=args.dry_run)
+    if args.json:
+        _out(counts)
+        return 0
+    verb = "would delete" if args.dry_run else "deleted"
+    print(f"{verb} {counts['episodes']} episode(s) older than {args.older_than}: {counts['expectations']} "
+          f"expectation(s), {counts['errors']} error(s), {counts['retrievals']} retrieval(s), "
+          f"{counts['events']} event(s)")
+    print(f"{verb} per-call detail of kept episodes: {counts['expectations_trimmed']} expectation(s), "
+          f"{counts['events_trimmed']} event(s)")
+    if counts["episodes_abandoned"]:
+        print(f"{'would mark' if args.dry_run else 'marked'} {counts['episodes_abandoned']} idle open episode(s) "
+              "as abandoned")
+    if not args.dry_run and not str(args.db).startswith(("postgres://", "postgresql://")):
+        print("SQLite keeps the file size until you run: sqlite3 <db> VACUUM")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace, mem: Memory) -> int:
     _out(mem.stats())
     return 0
@@ -258,6 +287,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--episode")
     sp.add_argument("--type")
     sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--json", action="store_true")
+
+    sp = add("prune", cmd_prune, "Delete old audit detail (items and versions are always kept).")
+    sp.add_argument("--older-than", required=True, metavar="AGE", type=_age_arg, help="e.g. 30d, 12h, 2w")
+    sp.add_argument("--dry-run", action="store_true", help="only count what would be deleted")
     sp.add_argument("--json", action="store_true")
 
     add("stats", cmd_stats, "Ledger counters.")

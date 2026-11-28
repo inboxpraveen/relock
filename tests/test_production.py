@@ -396,3 +396,102 @@ def test_huge_error_text_is_capped_in_the_ledger(mem, orders):
         ep.observe(ep.expect(item, "orders come back"), error=RuntimeError("x" * 50_000))
     stored = mem.store.errors(item.id)
     assert stored and all(len(json.dumps(e["diff"])) < 10_000 for e in stored)
+
+
+# ---------------------------------------------------------------- retention
+def _confirm(ep, item, n=1):
+    for _ in range(n):
+        ep.observe(ep.expect(item, "orders come back"), [{"id": 1}])
+
+
+def _fail(ep, item, correction="Call get_orders with ISO-8601 dates."):
+    return ep.observe(ep.expect(item, "orders come back", clauses=["c2"]),
+                      error=rl.ToolError("invalid date", correction=correction))
+
+
+def _exists(mem, episode_id):
+    try:
+        return mem.store.get_episode(episode_id)
+    except rl.NotFoundError:
+        return None
+
+
+def test_prune_drops_routine_audit_and_keeps_everything_a_version_depends_on(mem, orders):
+    from datetime import timedelta
+
+    item, _ = orders
+    email = mem.get("email.send")
+    later_fix = "Call get_orders with ISO-8601 dates in UTC."
+    with mem.episode("routine") as routine:  # nothing depends on it
+        routine.recall("send email recipients")
+        _confirm(routine, email, 3)
+    with mem.episode("fix") as fix:  # the rewrite happened here
+        fix.recall("fetch orders by date")
+        fix.recall("send email recipients")
+        _fail(fix, item)
+        assert _fail(fix, item).verdict is rl.Verdict.REWRITTEN
+        _confirm(fix, email, 2)
+    with mem.episode("pending") as pending:  # live evidence against v2
+        pending.recall("fetch orders by date")
+        assert _fail(pending, item, later_fix).verdict is rl.Verdict.PENDING
+    running = mem.episode("still running")
+    running.recall("fetch orders by date")
+
+    planned = mem.prune(timedelta(0), dry_run=True)
+    assert _exists(mem, routine.id)  # a dry run changes nothing
+    done = mem.prune(timedelta(0))
+    assert {k: done[k] for k in planned} == planned
+    assert done["episodes"] == 1 and done["episodes_abandoned"] == 0
+    assert done["expectations_trimmed"] == 2  # fix's two confirmations; its failures are evidence
+
+    assert not _exists(mem, routine.id)
+    for ep in (fix, pending, running):
+        assert _exists(mem, ep.id)
+    v2 = mem.get(item.id)
+    assert [v.version for v in mem.history(item.id)] == [1, 2]
+    assert len(mem.store.errors_by_ids(list(v2.evidence))) == len(v2.evidence) == 2
+    assert {e["type"] for e in mem.events(limit=500)} >= {"create", "rewrite", "prune"}
+    running.close()
+
+    with mem.episode("later") as later:  # pending evidence survived: one more error rewrites v2
+        later.recall("fetch orders by date")
+        assert _fail(later, item, later_fix).verdict is rl.Verdict.REWRITTEN
+
+
+def test_prune_marks_episodes_of_dead_processes_abandoned(tmp_path):
+    from datetime import timedelta
+
+    path = str(tmp_path / "shared.db")
+    crashed = rl.Memory(path)
+    crashed.add("Fetch orders", ["Call get_orders."], key="orders.fetch")
+    orphan = crashed.episode("never closed")
+    orphan.recall("orders")
+    crashed.store.close()  # the process died: the episode stays open in the database
+
+    m = rl.Memory(path)
+    mine = m.episode("open here")
+    mine.recall("orders")
+    counts = m.prune(timedelta(0))
+    assert counts["episodes_abandoned"] == 1 and counts["episodes"] == 1
+    assert not _exists(m, orphan.id)
+    assert _exists(m, mine.id)["status"] == "open"
+    mine.close()
+    m.close()
+
+
+def test_prune_cli_reports_a_dry_run(tmp_path, capsys):
+    from relock_memory.cli import main
+
+    db = str(tmp_path / "cli.db")
+    m = rl.Memory(db)
+    item = m.add("Fetch orders", ["Call get_orders."], key="orders.fetch")
+    with m.episode("t") as ep:
+        ep.recall("orders")
+        _confirm(ep, item)
+    m.close()
+    assert main(["--db", db, "prune", "--older-than", "0s", "--dry-run"]) == 0
+    assert "would delete 1 episode(s)" in capsys.readouterr().out
+    assert main(["--db", db, "prune", "--older-than", "0s", "--json"]) == 0
+    assert '"episodes": 1' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        main(["--db", db, "prune", "--older-than", "30"])  # no unit

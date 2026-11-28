@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
@@ -141,6 +141,7 @@ CREATE INDEX IF NOT EXISTS relock_events_type ON relock_events (type, at);
 CREATE INDEX IF NOT EXISTS relock_episodes_started ON relock_episodes (started_at);
 CREATE INDEX IF NOT EXISTS relock_errors_episode ON relock_errors (episode_id);
 CREATE INDEX IF NOT EXISTS relock_errors_expectation ON relock_errors (expectation_id);
+CREATE INDEX IF NOT EXISTS relock_versions_episode ON relock_versions (episode_id);
 """
 
 # Created after migrations, since they index columns a v1 database lacks.
@@ -154,6 +155,11 @@ _VERSION_COLS = (
     "confirmations, failures, parent_version, superseded_by, change_kind, delta, reason, episode_id, "
     "evidence, author, created_at"
 )
+
+
+def _chunks(seq: Sequence[str], n: int) -> Iterator[list[str]]:
+    for i in range(0, len(seq), n):
+        yield list(seq[i:i + n])
 
 
 class SQLStore:
@@ -665,7 +671,10 @@ class SQLStore:
             "rewrites": "SELECT COUNT(*) FROM relock_versions WHERE change_kind = 'reconsolidate'",
             "rollbacks": "SELECT COUNT(*) FROM relock_versions WHERE change_kind = 'rollback'",
             "episodes": "SELECT COUNT(*) FROM relock_episodes",
+            "episodes_open": "SELECT COUNT(*) FROM relock_episodes WHERE status = 'open'",
             "expectations": "SELECT COUNT(*) FROM relock_expectations",
+            "retrievals": "SELECT COUNT(*) FROM relock_retrievals",
+            "events": "SELECT COUNT(*) FROM relock_events",
             "errors_pending": "SELECT COUNT(*) FROM relock_errors WHERE status = 'pending'",
             "errors_blocked": "SELECT COUNT(*) FROM relock_errors WHERE status = 'blocked'",
             "errors_consumed": "SELECT COUNT(*) FROM relock_errors WHERE status = 'consumed'",
@@ -675,6 +684,115 @@ class SQLStore:
                 self._exec(cur, q, (False,) if "archived" in q else ())
                 out[name] = int(cur.fetchone()[0])
         return out
+
+    # ------------------------------------------------------------------ retention
+    # An episode's audit detail may go only if nothing depends on it: no version was written in it
+    # and none of its errors is evidence a version cites (consumed) or may still cite (pending).
+    # Rewrites mark their evidence consumed and the rest stale in one transaction, so an episode
+    # that is unreferenced now can't become referenced once it has ended.
+    _UNREFERENCED = ("NOT EXISTS (SELECT 1 FROM relock_versions v WHERE v.episode_id = e.id) AND NOT EXISTS "
+                     "(SELECT 1 FROM relock_errors r WHERE r.episode_id = e.id AND r.status IN ('pending', 'consumed'))")
+    _STALE_OPEN = ("(e.status = 'open' AND e.started_at < ? AND NOT EXISTS "
+                   "(SELECT 1 FROM relock_events x WHERE x.episode_id = e.id AND x.at >= ?))")
+    _ROUTINE_EVENTS = ("expect", "confirm", "confirm_ignored")
+
+    def prune(self, cutoff: str, *, keep_events: Sequence[str], exclude: Collection[str] = (),
+              dry_run: bool = False, batch: int = 500) -> dict[str, int]:
+        """Delete audit detail of episodes that ended before ``cutoff``; see :meth:`Memory.prune`."""
+        keep = list(keep_events) or ["-"]
+        keep_in = ", ".join("?" * len(keep))
+        counts = dict.fromkeys(("episodes_abandoned", "episodes", "expectations", "errors", "retrievals", "events",
+                                "expectations_trimmed", "events_trimmed"), 0)
+
+        with self._tx(write=False) as cur:
+            self._exec(cur, f"SELECT e.id FROM relock_episodes e WHERE {self._STALE_OPEN}", (cutoff, cutoff))
+            abandoned = [r[0] for r in cur.fetchall() if r[0] not in exclude]
+        counts["episodes_abandoned"] = len(abandoned)
+        if dry_run:
+            return self._prune_counts(cutoff, keep, keep_in, abandoned, counts)
+
+        # Episodes a crashed process left open, idle since the cutoff (none open in this process).
+        for chunk in _chunks(abandoned, batch):
+            marks = ", ".join("?" * len(chunk))
+            with self._tx() as cur:
+                self._exec(cur, f"UPDATE relock_episodes SET status = 'abandoned' WHERE status = 'open' "
+                                f"AND id IN ({marks})", chunk)
+                self._exec(cur, f"UPDATE relock_expectations SET status = 'void', resolved_at = ? "
+                                f"WHERE status = 'open' AND episode_id IN ({marks})", (now(), *chunk))
+
+        ended = "e.status <> 'open' AND COALESCE(e.ended_at, e.started_at) < ?"
+        while True:  # whole episodes, one batch per transaction
+            with self._tx() as cur:
+                self._exec(cur, f"SELECT e.id FROM relock_episodes e WHERE {ended} AND {self._UNREFERENCED} "
+                                f"LIMIT {int(batch)}", (cutoff,))
+                ids = [r[0] for r in cur.fetchall()]
+                if not ids:
+                    break
+                marks = ", ".join("?" * len(ids))
+                for table, key in (("errors", "errors"), ("expectations", "expectations"),
+                                   ("retrievals", "retrievals")):
+                    self._exec(cur, f"DELETE FROM relock_{table} WHERE episode_id IN ({marks})", ids)
+                    counts[key] += max(cur.rowcount, 0)
+                self._exec(cur, f"DELETE FROM relock_events WHERE episode_id IN ({marks}) AND type NOT IN ({keep_in})",
+                           (*ids, *keep))
+                counts["events"] += max(cur.rowcount, 0)
+                self._exec(cur, f"DELETE FROM relock_episodes WHERE id IN ({marks})", ids)
+                counts["episodes"] += max(cur.rowcount, 0)
+
+        after = ""
+        while True:  # episodes that must stay: drop only per-call detail nothing cites
+            with self._tx() as cur:
+                self._exec(cur, f"SELECT e.id FROM relock_episodes e WHERE {ended} AND e.id > ? "
+                                f"ORDER BY e.id LIMIT {int(batch)}", (cutoff, after))
+                ids = [r[0] for r in cur.fetchall()]
+                if not ids:
+                    break
+                after = ids[-1]
+                marks = ", ".join("?" * len(ids))
+                self._exec(cur, f"DELETE FROM relock_expectations WHERE episode_id IN ({marks}) AND status <> 'open' "
+                                "AND NOT EXISTS (SELECT 1 FROM relock_errors r "
+                                "WHERE r.expectation_id = relock_expectations.id)", ids)
+                counts["expectations_trimmed"] += max(cur.rowcount, 0)
+                routine = [t for t in self._ROUTINE_EVENTS if t not in keep]
+                if routine:
+                    self._exec(cur, f"DELETE FROM relock_events WHERE episode_id IN ({marks}) "
+                                    f"AND type IN ({', '.join('?' * len(routine))})", (*ids, *routine))
+                    counts["events_trimmed"] += max(cur.rowcount, 0)
+
+        with self._tx() as cur:  # events outside any episode
+            self._exec(cur, f"DELETE FROM relock_events WHERE episode_id IS NULL AND at < ? AND type NOT IN ({keep_in})",
+                       (cutoff, *keep))
+            counts["events"] += max(cur.rowcount, 0)
+        return counts
+
+    def _prune_counts(self, cutoff: str, keep: list[str], keep_in: str, abandoned: list[str],
+                      counts: dict[str, int]) -> dict[str, int]:
+        """What :meth:`prune` would delete, without deleting anything."""
+        # Episodes prune would mark abandoned count as ended (open ones in this process don't).
+        idle = f" OR e.id IN ({', '.join('?' * len(abandoned))})" if abandoned else ""
+        ended = f"(e.status <> 'open'{idle}) AND COALESCE(e.ended_at, e.started_at) < ?"
+        params: tuple[Any, ...] = (*abandoned, cutoff)
+        gone = f"SELECT e.id FROM relock_episodes e WHERE {ended} AND {self._UNREFERENCED}"
+        kept = f"SELECT e.id FROM relock_episodes e WHERE {ended} AND NOT ({self._UNREFERENCED})"
+        routine = [t for t in self._ROUTINE_EVENTS if t not in keep] or ["-"]
+        queries = {
+            "episodes": (f"SELECT COUNT(*) FROM ({gone}) g", params),
+            "errors": (f"SELECT COUNT(*) FROM relock_errors WHERE episode_id IN ({gone})", params),
+            "expectations": (f"SELECT COUNT(*) FROM relock_expectations WHERE episode_id IN ({gone})", params),
+            "retrievals": (f"SELECT COUNT(*) FROM relock_retrievals WHERE episode_id IN ({gone})", params),
+            "events": (f"SELECT COUNT(*) FROM relock_events WHERE type NOT IN ({keep_in}) AND "
+                       f"(episode_id IN ({gone}) OR (episode_id IS NULL AND at < ?))", (*keep, *params, cutoff)),
+            "expectations_trimmed": (f"SELECT COUNT(*) FROM relock_expectations x WHERE x.episode_id IN ({kept}) "
+                                     "AND x.status <> 'open' AND NOT EXISTS (SELECT 1 FROM relock_errors r "
+                                     "WHERE r.expectation_id = x.id)", params),
+            "events_trimmed": (f"SELECT COUNT(*) FROM relock_events WHERE type IN ({', '.join('?' * len(routine))}) "
+                               f"AND episode_id IN ({kept})", (*routine, *params)),
+        }
+        with self._tx(write=False) as cur:
+            for name, (q, qp) in queries.items():
+                self._exec(cur, q, qp)
+                counts[name] = int(cur.fetchone()[0])
+        return counts
 
     # ------------------------------------------------------------------ export
     def iter_rewrites(self) -> list[dict[str, Any]]:

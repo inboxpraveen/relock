@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 _ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"  # Crockford-ish base32, lowercase
@@ -113,6 +113,28 @@ def tokenize(text: str) -> list[str]:
 def approx_tokens(text: str) -> int:
     """Cheap token estimate (about 4 characters per token)."""
     return max(1, (len(text) + 3) // 4)
+
+
+_AGE_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def parse_age(value: Any) -> timedelta:
+    """``timedelta`` or a string such as ``"90s"``, ``"45m"``, ``"12h"``, ``"30d"``, ``"2w"``."""
+    if isinstance(value, timedelta):
+        age = value
+    else:
+        text = str(value).strip().lower()
+        unit = text[-1:] if text[-1:] in _AGE_UNITS else ""
+        try:
+            number = float(text[: len(text) - len(unit)] if unit else text)
+        except ValueError:
+            raise ValueError(f"invalid age {value!r}: use a number with s, m, h, d or w, e.g. '30d'") from None
+        if not unit:
+            raise ValueError(f"invalid age {value!r}: give a unit (s, m, h, d or w), e.g. '30d'")
+        age = timedelta(seconds=number * _AGE_UNITS[unit])
+    if age < timedelta(0):
+        raise ValueError("age must not be negative")
+    return age
 
 
 def truncate(text: str, limit: int) -> str:

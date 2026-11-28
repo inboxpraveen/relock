@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from typing import Any, TypeVar
 
-from ._util import new_id, now, truncate
+from ._util import new_id, now, parse_age, truncate
 from .delta import Op, apply, parse_ops, validate
 from .delta import diff as clause_diff
 from .episode import Episode
@@ -44,6 +44,9 @@ attached as ``record.relock_event`` only when DEBUG is enabled, since payloads c
 """
 
 _REASON_KEYS = ("reason", "error", "observed")
+
+KEEP_EVENTS = ("create", "rewrite", "manual", "rollback", "archive", "unarchive", "prune")
+"""Event types :meth:`Memory.prune` keeps by default: every change to memory content."""
 
 _CHANGE_WINDOW_S = 120.0
 """On a cache refresh, items updated this long before the previous refresh are re-read too.
@@ -384,6 +387,34 @@ class Memory:
                                 "class": e["error_class"], "observed": e["diff"].get("observed")} for e in errs],
             "blocked_errors": [{"id": e["id"], "reason": e["reason"], "source": e["source"]} for e in blocked],
         }
+
+    def prune(self, older_than: _dt.timedelta | str, *, dry_run: bool = False,
+              keep_events: Iterable[str] = KEEP_EVENTS) -> dict[str, int]:
+        """Delete audit detail of episodes that ended more than ``older_than`` ago (e.g. ``"30d"``).
+
+        Bounds database growth without losing the audit trail of memory content:
+
+        * Items and versions are never deleted, so every version, its delta, reason, author and
+          evidence ids stay; so do events of the ``keep_events`` types (content changes).
+        * An episode goes (with its retrievals, expectations, errors and events) only if no
+          version was written in it and none of its errors is or may become evidence.
+        * Older episodes that must stay lose only per-call detail nothing cites: confirmed
+          expectations and their ``expect`` / ``confirm`` events.
+        * An episode still open but idle since the cutoff (its process died) is marked
+          ``abandoned`` first. Episodes open in this process are never touched.
+
+        Deletes run in small batches, one transaction each. Returns counts per table; with
+        ``dry_run=True`` nothing changes and the counts say what would go. SQLite keeps the
+        file size until ``VACUUM``; Postgres reuses the space after autovacuum.
+        """
+        age = parse_age(older_than)
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - age).isoformat(timespec="microseconds")
+        with self._open_lock:
+            exclude = set(self._open.keys())
+        counts = self.store.prune(cutoff, keep_events=tuple(keep_events), exclude=exclude, dry_run=dry_run)
+        if not dry_run:
+            self._emit("prune", data={"older_than_s": age.total_seconds(), "cutoff": cutoff, **counts})
+        return counts
 
     def stats(self) -> dict[str, int]:
         return self.store.stats()

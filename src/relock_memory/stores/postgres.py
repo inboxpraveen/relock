@@ -33,7 +33,8 @@ class PostgresStore(SQLStore):
             pool_size: most connections open at once. Each in-flight store call holds one.
             pool_timeout: seconds to wait for a free connection before raising :class:`StoreError`.
             ping_after: a connection idle longer than this is checked with ``SELECT 1`` before use.
-            connect_kwargs: passed to ``psycopg.connect``.
+            connect_kwargs: passed to ``psycopg.connect``. ``connect_timeout`` defaults to 10 seconds
+                unless the DSN sets one, so an unreachable host fails fast instead of hanging.
         """
         super().__init__()
         try:
@@ -48,6 +49,8 @@ class PostgresStore(SQLStore):
         self.pool_size = pool_size
         self.pool_timeout = pool_timeout
         self.ping_after = ping_after
+        if "connect_timeout" not in dsn:
+            connect_kwargs.setdefault("connect_timeout", 10)
         self.connect_kwargs = connect_kwargs
         self._cv = threading.Condition()
         self._idle: list[tuple[Any, float, int]] = []  # (connection, last used, generation)
