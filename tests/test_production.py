@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -247,11 +248,12 @@ def test_content_changes_refresh_only_what_changed_across_processes(tmp_path, mo
     for i in range(30):
         a.add(f"procedure {i}", [f"step {i}"], key=f"p{i}")
     monkeypatch.setattr("relock_memory.memory._CHANGE_WINDOW_S", 0.0)  # no re-read window for old writers
+    time.sleep(0.05)  # coarse clocks: the seed must be older than the warm-up's timestamp
     a.search("procedure")  # warm a's cache
     full_loads, reread = [], []
     real, real_changed = a.store.active, a.store.changed_since
     monkeypatch.setattr(a.store, "active", lambda *x, **k: full_loads.append(1) or real(*x, **k))
-    monkeypatch.setattr(a.store, "changed_since", lambda *x: reread.extend(real_changed(*x)) or real_changed(*x))
+    monkeypatch.setattr(a.store, "changed_since", lambda *x: (lambda r: reread.extend(r) or r)(real_changed(*x)))
     b.add("new procedure", ["a new step"], key="new")
     b.edit("p3", [{"op": "add", "text": "and log it"}])
     b.archive("p4")
@@ -260,7 +262,7 @@ def test_content_changes_refresh_only_what_changed_across_processes(tmp_path, mo
     assert _snapshot(a._active_items()) == _snapshot(real())
     assert {h.item.key for h in a.search("new step", k=1)} == {"new"}
     assert full_loads == []
-    assert {i.key for i in reread} <= {"new", "p3", "p4", "p5"}
+    assert {i.key for i in reread} <= {"new", "p3", "p4", "p5"}  # only the changed items are re-read
     a.close()
     b.close()
 
@@ -439,6 +441,7 @@ def test_prune_drops_routine_audit_and_keeps_everything_a_version_depends_on(mem
         assert _fail(pending, item, later_fix).verdict is rl.Verdict.PENDING
     running = mem.episode("still running")
     running.recall("fetch orders by date")
+    time.sleep(0.05)  # age 0 means "ended before now": step past the clock tick they ended in
 
     planned = mem.prune(timedelta(0), dry_run=True)
     assert _exists(mem, routine.id)  # a dry run changes nothing
@@ -474,6 +477,7 @@ def test_prune_marks_episodes_of_dead_processes_abandoned(tmp_path):
     m = rl.Memory(path)
     mine = m.episode("open here")
     mine.recall("orders")
+    time.sleep(0.05)
     counts = m.prune(timedelta(0))
     assert counts["episodes_abandoned"] == 1 and counts["episodes"] == 1
     assert not _exists(m, orphan.id)
@@ -492,6 +496,7 @@ def test_prune_cli_reports_a_dry_run(tmp_path, capsys):
         ep.recall("orders")
         _confirm(ep, item)
     m.close()
+    time.sleep(0.05)
     assert main(["--db", db, "prune", "--older-than", "0s", "--dry-run"]) == 0
     assert "would delete 1 episode(s)" in capsys.readouterr().out
     assert main(["--db", db, "prune", "--older-than", "0s", "--json"]) == 0
