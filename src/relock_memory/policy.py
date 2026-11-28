@@ -70,6 +70,36 @@ class WritePolicy:
 
     new_version_prior: tuple[float, float] = (1.0, 1.0)
 
+    def __post_init__(self) -> None:
+        # Coerce what is unambiguous ({"tool", "verifier"} -> a frozenset of Source) and refuse
+        # the rest at construction, rather than letting a typo quietly change what may write.
+        sources = self.trusted_sources
+        if isinstance(sources, (str, Source)):
+            sources = [sources]
+        try:
+            object.__setattr__(self, "trusted_sources", frozenset(Source(s) for s in sources))
+        except (TypeError, ValueError):
+            raise ValueError(f"trusted_sources must be sources from {[s.value for s in Source]}, "
+                             f"not {self.trusted_sources!r}") from None
+        for name in ("min_evidence", "inertia", "confirmation_cancels"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+                    or value < 0:
+                raise ValueError(f"WritePolicy.{name} must be a finite number >= 0, not {value!r}")
+        for name, low in (("max_ops", 1), ("max_clause_chars", 1), ("max_rewrites_per_item_per_episode", 0)):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < low:
+                raise ValueError(f"WritePolicy.{name} must be a whole number >= {low}, not {value!r}")
+        if self.rewrite_on not in ("observe", "close"):
+            raise ValueError(f"WritePolicy.rewrite_on must be 'observe' or 'close', not {self.rewrite_on!r}")
+        if self.edit_scope not in ("cited", "item"):
+            raise ValueError(f"WritePolicy.edit_scope must be 'cited' or 'item', not {self.edit_scope!r}")
+        prior = tuple(self.new_version_prior)
+        if len(prior) != 2 or not all(isinstance(x, (int, float)) and math.isfinite(x) and x > 0 for x in prior):
+            raise ValueError(f"WritePolicy.new_version_prior must be two positive numbers, not "
+                             f"{self.new_version_prior!r}")
+        object.__setattr__(self, "new_version_prior", (float(prior[0]), float(prior[1])))
+
     # ------------------------------------------------------------------ gates
     def admit(self, signal: Signal) -> Admission:
         """Decide whether a *failure* signal may count as reconsolidation evidence."""

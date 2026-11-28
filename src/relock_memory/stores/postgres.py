@@ -24,6 +24,7 @@ _INIT_LOCK_KEY = 0x72656C6B  # "relk": serialises schema creation across process
 
 class PostgresStore(SQLStore):
     placeholder = "%s"
+    for_update = " FOR UPDATE"
     types = {"bool": "BOOLEAN", "false": "FALSE", "ts": "TIMESTAMPTZ", "json": "JSONB", "real": "DOUBLE PRECISION"}
 
     def __init__(self, dsn: str, *, pool_size: int = 5, pool_timeout: float = 30.0, ping_after: float = 30.0,

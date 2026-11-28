@@ -28,7 +28,8 @@ episode = mem.episode(task)            # open window
   expect(item, statement, clauses, check, tool)
   <act>
   observe(expectation, result | error, signal)
-      matched  -> trusted?  confidence += 1, cancel pending evidence (flake damping)
+      matched  -> trusted?  confidence += 1, cancel same-tool pending evidence (flake damping)
+                  (not counted right after a corrected failure of the tool in this episode)
       mismatch -> admit(signal)?
                     no  -> error row status=blocked (audited, never counts)
                     yes -> error row status=pending, beta += 1
@@ -48,19 +49,22 @@ close()                                # re-lock; open expectations -> void
    prevents oscillation within one window).
 5. The rewriter proposes a delta.
 6. The delta validates:
-   - ops reference existing clauses;
+   - ops are `replace`, `add` or `remove`, with non-empty text where they write one;
+   - ops reference existing clauses, and no two ops touch the same clause;
    - `replace`/`remove` touch only *cited* clauses when `edit_scope="cited"` and any were cited;
    - there are at most `max_ops` ops;
    - no clause exceeds `max_clause_chars`;
    - the item keeps at least one clause;
-   - the delta is not a no-op.
+   - the delta is not a no-op, and leaves no two identical clauses that weren't there before.
 7. A compare-and-swap commit:
    ```
    UPDATE items SET current_version = new WHERE id = ? AND current_version = old
    ```
    followed by superseding the old version, inserting the new one, marking the evidence
    `consumed` and marking any other pending errors on the old version `stale`, all in one
-   transaction. A partial unique index `(item_id) WHERE status = 'active'` makes a second active
+   transaction. If any of the evidence is no longer pending (another process cancelled or used
+   it), the whole commit rolls back and the result is `CONFLICT`. An error stored against a
+   version that was already superseded is stored `stale`. A partial unique index `(item_id) WHERE status = 'active'` makes a second active
    version impossible even under bugs or concurrent writers.
 
 After a rewrite the item stays labile in the same episode at its new version, so the agent can
@@ -80,6 +84,17 @@ re-read it (`ep.get(item)`) and retry within the same task.
 Confirmations raise confidence only from trusted sources. Otherwise an attacker could inflate
 inertia with fake "it worked" reports and make a poisoned procedure harder to fix.
 
+**Flake damping.** A trusted confirmation cancels up to `confirmation_cancels` (default 1.0) of
+pending, non-authoritative evidence against the same version from the same tool (`None` for
+expectations without one). A confirmation is not counted at all, so it neither raises confidence
+nor cancels anything, when the episode already holds a pending error of the same item, version
+and tool that carries a correction the rewriter would see: the agent most likely followed that
+correction, so the success says nothing for the stored procedure. A success after a failure
+without a correction is still treated as a possible flake.
+
+An authoritative correction that the rewriter declines, or that yields an invalid edit, is
+cancelled rather than left pending.
+
 ### Error taxonomy
 
 `classify_exception` resolves the error class from the first rule that matches:
@@ -97,6 +112,12 @@ inertia with fake "it worked" reports and make a poisoned procedure harder to fi
    learning from an environment problem.
 6. Anything else -> unknown (weight 0.5).
 
+A failure known only by its message (`tool_result(error="...")`, the HTTP API's `error.message`)
+is unknown, unless the message reads as transient: timed out, rate limit, too many requests,
+service unavailable, a dropped connection, or an HTTP 408/425/429/5xx status.
+`KeyboardInterrupt`, `asyncio.CancelledError` and LangGraph interrupts are not outcomes and are
+never recorded.
+
 ## Attribution of tool outcomes
 
 A wrapped tool (`@mem.wrap`) or the LangChain callback handler looks up the episode active in the
@@ -106,12 +127,14 @@ is no process-wide fallback: with several agents in one process, a tool outcome 
 to the episode of the agent that made the call. A wrapped tool that runs outside every episode
 while some are open is not recorded, and a warning names it (once per tool). It then resolves:
 
-1. any open, explicit expectation that names this tool for a labile item;
+1. any open, explicit expectation that names this tool for a labile item, whether or not the
+   item lists the tool;
 2. otherwise, an automatic `succeeds()` expectation for each labile item whose `tools` contains the
    tool name (plus items that declare no tools, if `attribute_undeclared=True`).
 
 Instrumentation never changes tool behaviour. Results are returned unchanged, exceptions are
-re-raised, and errors inside relock are logged rather than raised.
+re-raised, and errors inside relock are logged rather than raised. A tool wrapped twice, or wrapped
+and also observed by the LangChain handler, is recorded once.
 
 ## Rewriters
 
@@ -122,10 +145,14 @@ their text. Implementations:
 - `HintRewriter`: deterministic, model-free. It applies the explicit `correction` carried by
   trusted signals: authoritative corrections first, then the most frequent, then the most recent.
   It replaces the cited clause (or the most similar clause when nothing was cited) and adds a new
-  clause when nothing is similar.
+  clause when nothing is similar. It declines a correction longer than `max_clause_chars`, or one
+  that the item already states.
 - `LLMRewriter(llm)`: builds a one-item, clause-id prompt and parses JSON while tolerating
   `<think>` blocks, code fences and chatter. It validates the delta against the same rules and
-  feeds errors back for up to `max_attempts`. On failure it falls back to `HintRewriter`.
+  feeds errors back for up to `max_attempts`; a reply without an `ops` list counts as invalid.
+  On failure it falls back to `HintRewriter` (pass `fallback=None` for none).
+
+A rewriter sees at most the 20 most recent pending errors; a rewrite consumes all of them.
 - `CallableRewriter(fn)`: any function returning ops.
 
 ## Storage schema
@@ -188,7 +215,9 @@ Not mitigated:
 - Agent-influenced text in verifier output. The MCP server passes a verifier's output to the
   rewriter so that an LLM rewriter can work out the fix. An agent that can edit what the verifier
   runs, such as the tests in a coding task, can put text into that output. The pass/fail verdict
-  stays trusted; review rewrites made from verifier evidence.
+  stays trusted; review rewrites made from verifier evidence, or start the server with
+  `--untrusted-verifier-output` (`trust_verifier_output=False`) to keep that text from the
+  rewriter.
 - Retrieval-time injection through item *content* written by an agent. Teaching is off by
   default in both the toolkit (`allow_teach`) and the MCP server (`--allow-teach`). When it is on,
   agent-created items carry `meta.origin = "agent"` and author `agent`, and can be reviewed or

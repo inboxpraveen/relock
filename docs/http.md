@@ -47,6 +47,8 @@ A failed call carries an error object:
   logged but never rewrites, and a success never raises confidence or cancels trusted failures.
 - **`"detail_trusted": false`** is for a message that echoes remote content, such as a server's
   response body. The failure still counts, but its text never reaches the rewriter.
+- **The `error` fields mean the same for every `source`.** A `verifier` failure marked
+  `"transient": true` or carrying a 5xx `status` never counts either.
 
 Items are attributed to a tool through the `tools` list given when the item is added
 (`POST /v1/items`). To attribute an outcome to specific items instead, pass `"items": [...]`.
@@ -64,15 +66,17 @@ Items are attributed to a tool through the `tools` list given when the item is a
 | `GET /v1/health` | Liveness and version. No token needed. |
 
 Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these statuses:
-- `400`: bad input;
+- `400`: bad input, including a JSON body that repeats a key;
 - `401`: missing or wrong token;
 - `404`: unknown item or route, or an episode that is closed or expired;
-- `405`: the route exists but not for this method;
-- `409`: the item was not recalled in this episode, or the episode is closed;
+- `405`: the route exists but not for this method (the `Allow` header lists the methods);
+- `409`: the item was not recalled in this episode, the episode is closed, or the expectation was
+  already observed (`already_observed`);
 - `413`: body over 1 MiB;
 - `429`: too many open episodes; close some first;
 - `500`: an unexpected server error;
-- `501`: an unsupported `Transfer-Encoding`.
+- `501`: an unsupported `Transfer-Encoding`;
+- `503`: the database is unavailable; retry later. The details are logged, not sent.
 
 ## Trust
 
@@ -93,20 +97,21 @@ Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these stat
 ## Deployment
 
 - **Storage:** SQLite by default (`--db` or `RELOCK_DB`). For Postgres, set
-  `RELOCK_DB=postgresql://...`; the image includes the driver.
+  `RELOCK_DB=postgresql://...`; the image includes the driver. `RELOCK_PG_POOL_SIZE` sets the
+  connection pool size (default 5).
 - **Concurrency:** requests run on threads, serving up to 256 connections at once; more wait to
   be accepted. A connection idle or stalled for 30 seconds is closed. Writes use compare-and-swap,
   so concurrent rewrites of the same item never lose an update; the later one becomes a
   `conflict`.
 - **Bodies:** `Content-Length` and chunked bodies are both accepted. A request carrying both
-  framings is refused.
+  framings, or two `Content-Length` or `Transfer-Encoding` headers, is refused.
 - **Shutdown:** on `SIGTERM` (for example `docker stop`) the server re-locks every open episode
   and closes the database before exiting.
 - **Logs:** the server logs every ledger event at INFO to stderr (requests at DEBUG): rewrites,
   prediction errors, blocked or declined writes and conflicts, each with episode and item ids.
   Set `RELOCK_LOG_LEVEL=DEBUG` to include event payloads, or `WARNING` to keep only problems.
 - **Retention:** the ledger grows with every tool call. Run `relock prune --older-than 30d`
-  from a scheduled job (see the README's production notes).
+  from a scheduled job (see [retention](production.md#growth-and-retention)).
 - **Replicas:** open episodes live in the server process. With more than one replica on a shared
   Postgres database, send each episode's requests to the same replica, for example with sticky
   routing on the episode id.

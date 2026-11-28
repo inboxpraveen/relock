@@ -21,6 +21,7 @@ from .episode import Episode
 from .policy import WritePolicy
 from .retrieval import EmbedFn, Retriever, default_retriever, rank_items
 from .rewriters import HintRewriter, Rewriter
+from .signals import is_control_flow
 from .stores import SQLStore, open_store
 from .types import Clause, ConflictError, Hit, Item, NotFoundError
 
@@ -58,12 +59,46 @@ slow transactions; re-reading an unchanged item is harmless."""
 _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 
 
+def _names(value: str | Iterable[str] | None, what: str) -> tuple[str, ...]:
+    """Tool or tag names. A bare string is one name, never split into characters."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = [value]
+    names = tuple(dict.fromkeys(str(v).strip() for v in value))
+    if any(not n for n in names):
+        raise ValueError(f"{what} must be non-empty names, got {list(value)!r}")
+    return names
+
+
+def _is_wrapper(wrappers: weakref.WeakSet[Callable[..., Any]], fn: Any) -> bool:
+    try:
+        return fn in wrappers
+    except TypeError:  # unhashable or not weak-referenceable: never one of ours
+        return False
+
+
+def _tool_name(fn: Callable[..., Any]) -> str:
+    """The name a wrapped tool is recorded under: its ``__name__``, a partial's function name,
+    or a callable object's class name."""
+    for obj in (fn, getattr(fn, "func", None)):  # functools.partial keeps the function in .func
+        name = getattr(obj, "__name__", None)
+        if isinstance(name, str) and name and name != "<lambda>":
+            return name
+    name = "<lambda>" if getattr(fn, "__name__", None) == "<lambda>" else type(fn).__name__
+    log.warning("relock: %r has no name of its own; its outcomes are recorded as tool %r, which an item's "
+                "tools=[...] must name. Pass mem.wrap(fn, name=...) to choose it.", fn, name)
+    return name
+
+
 def _clauses(value: str | Iterable[str]) -> list[str]:
     if isinstance(value, str):
         lines = [ln for ln in value.splitlines() if ln.strip()]
-        parts = [_BULLET.sub("", ln).strip() for ln in lines] if len(lines) > 1 else [value.strip()]
+        parts = [_BULLET.sub("", ln).strip() for ln in lines]
     else:
-        parts = [str(v).strip() for v in value]
+        # One clause per entry. A line break inside one would read as a separate, unnumbered
+        # line once the item is rendered into a prompt.
+        parts = [" ".join(str(v).split()) for v in value]
     parts = [p for p in parts if p]
     if not parts:
         raise ValueError("an item needs at least one clause")
@@ -124,6 +159,9 @@ class Memory:
     ) -> None:
         self.store = open_store(store)
         self.policy = policy or WritePolicy()
+        if rewriter is not None and not callable(getattr(rewriter, "propose", None)):
+            hint = " (wrap a plain function in relock.CallableRewriter)" if callable(rewriter) else ""
+            raise TypeError(f"rewriter must have propose(request), not {type(rewriter).__name__}{hint}")
         self.rewriter: Rewriter = rewriter or HintRewriter()
         self.retriever: Retriever = retriever or default_retriever(embed)
         self.on_event = on_event
@@ -134,6 +172,8 @@ class Memory:
         self._open: weakref.WeakValueDictionary[str, Episode] = weakref.WeakValueDictionary()
         self._open_lock = threading.Lock()
         self._unbound_warned: set[str] = set()
+        self._bind_warned: set[tuple[str, str]] = set()
+        self._wrappers: weakref.WeakSet[Callable[..., Any]] = weakref.WeakSet()  # functions wrap() returned
         self._hook_failures = 0
         self._snapshot: tuple[int, tuple[Item, ...]] | None = None  # (revision, active items by id)
         self._cache_items: dict[str, Item] = {}
@@ -203,10 +243,14 @@ class Memory:
 
     def _ranked_hits(self, query: str, k: int, *, kinds: Sequence[str] | None = None,
                      tags: Sequence[str] | None = None) -> list[Hit]:
+        if not isinstance(query, str):
+            raise TypeError(f"query must be a string, not {type(query).__name__}")
+        if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+            raise ValueError(f"k must be a whole number of at least 1, not {k!r}")
         items = self._active_items()
         candidates = None
         if kinds or tags:
-            wanted_kinds, wanted_tags = set(kinds or ()), set(tags or ())
+            wanted_kinds, wanted_tags = set(_names(kinds, "kinds")), set(_names(tags, "tags"))
             candidates = {i.id for i in items
                           if (not wanted_kinds or i.kind in wanted_kinds) and (not wanted_tags or wanted_tags & set(i.tags))}
         ranked = rank_items(self.retriever, query, items, k, candidates)
@@ -251,10 +295,14 @@ class Memory:
         """
         if key is not None and exist_ok:
             try:
-                return self.get(key)
+                return self._existing(key)
             except NotFoundError:
                 pass
+        elif exist_ok:
+            log.warning("relock: add(%r, exist_ok=True) without a key creates a new item on every call; "
+                        "pass key=... so a restart finds the existing item", title)
         texts = _clauses(clauses)
+        tags, tools = _names(tags, "tags"), _names(tools, "tools")
         a, b = self.policy.new_version_prior
         item = Item(
             id=new_id("itm"),
@@ -277,10 +325,18 @@ class Memory:
             self.store.create_item(item)
         except ConflictError:
             if exist_ok and key is not None:
-                return self.get(key)
+                return self._existing(key)
             raise
         self._emit("create", item_id=item.id, version=1, data={"key": key, "title": item.title,
                                                                 "clauses": [c.to_dict() for c in item.clauses]})
+        return item
+
+    def _existing(self, key: str) -> Item:
+        item = self.get(key)
+        if item.archived:
+            log.warning("relock: add(key=%r, exist_ok=True) found an archived item, which recall never "
+                        "returns; run `relock archive --undo %s` or mem.archive(%r, archived=False) to use "
+                        "it again", key, key, key)
         return item
 
     teach = add
@@ -334,6 +390,16 @@ class Memory:
         log.warning("relock: tool %r ran outside any episode while %d episode(s) are open in this process; "
                     "its outcome was not recorded. Call it inside `with ep:` or `with ep.activate():`, "
                     "or submit it to worker threads with `ep.run(fn, ...)`. (Logged once per tool.)", tool, n)
+
+    def _note_bind_failure(self, tool: str, error: BaseException) -> None:
+        """Log (once per tool and error type) why a wrapped call's outcome could not be recorded."""
+        key = (tool, type(error).__name__)
+        with self._open_lock:
+            if key in self._bind_warned:
+                return
+            self._bind_warned.add(key)
+        log.warning("relock: could not record the outcome of tool %r (%s: %s); the tool ran normally. "
+                    "(Logged once per tool and error type.)", tool, type(error).__name__, error)
 
     # ------------------------------------------------------------------ admin edits
     def _commit_admin(self, current: Item, clauses: tuple[Clause, ...], seq: int, *, kind: str,
@@ -441,48 +507,68 @@ class Memory:
         """
         if fn is None:
             return lambda f: self.wrap(f, name=name, items=items)
-        tool = name or getattr(fn, "__name__", "tool")
+        if not callable(fn):
+            raise TypeError(f"mem.wrap needs a function or other callable, not {type(fn).__name__}")
+        if isinstance(items, str):
+            items = [items]
+        if _is_wrapper(self._wrappers, fn):  # already wrapped by this memory: wrapping again would record twice
+            if (name is None or name == fn.__relock_tool__) and items is None:
+                return fn
+            fn = fn.__wrapped__
+        tool = name or _tool_name(fn)
         refs = list(items) if items else None
         memory = self
 
-        if inspect.iscoroutinefunction(fn):
+        def bind() -> tuple[Episode | None, list[Any]]:
+            ep = memory.current_episode()
+            if ep is None:
+                memory._note_unbound(tool)
+                return None, []
+            if ep._tool_claimed(tool):  # a framework callback (e.g. LangChain's) records this call
+                return None, []
+            try:
+                return ep, ep._bind_tool(tool, refs)
+            except Exception as e:  # instrumentation must never break the tool call
+                memory._note_bind_failure(tool, e)
+                return None, []
+
+        def failed(ep: Episode | None, exps: list[Any], e: BaseException) -> None:
+            if ep is not None and not is_control_flow(e):  # an interrupt or cancel isn't an outcome
+                ep._observe_quietly(exps, error=e)
+
+        call = None if inspect.isroutine(fn) else type(fn).__call__  # a callable object's method
+        if inspect.iscoroutinefunction(fn) or (call is not None and inspect.iscoroutinefunction(call)):
             @functools.wraps(fn)
             async def awrapper(*args: Any, **kwargs: Any) -> Any:
-                ep = memory.current_episode()
-                if ep is None:
-                    memory._note_unbound(tool)
-                exps = ep._bind_tool(tool, refs) if ep is not None else []
+                ep, exps = bind()
                 try:
                     result = await fn(*args, **kwargs)
-                except Exception as e:
-                    if ep is not None:
-                        ep._observe_quietly(exps, error=e)
+                except BaseException as e:
+                    failed(ep, exps, e)
                     raise
                 if ep is not None:
                     ep._observe_quietly(exps, result=result)
                 return result
 
-            awrapper.__relock_tool__ = tool  # type: ignore[attr-defined]
-            return awrapper
-
-        @functools.wraps(fn)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            ep = memory.current_episode()
-            if ep is None:
-                memory._note_unbound(tool)
-            exps = ep._bind_tool(tool, refs) if ep is not None else []
-            try:
-                result = fn(*args, **kwargs)
-            except Exception as e:
+            wrapped: Any = awrapper
+        else:
+            @functools.wraps(fn)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                ep, exps = bind()
+                try:
+                    result = fn(*args, **kwargs)
+                except BaseException as e:
+                    failed(ep, exps, e)
+                    raise
                 if ep is not None:
-                    ep._observe_quietly(exps, error=e)
-                raise
-            if ep is not None:
-                ep._observe_quietly(exps, result=result)
-            return result
+                    ep._observe_quietly(exps, result=result)
+                return result
 
-        wrapper.__relock_tool__ = tool  # type: ignore[attr-defined]
-        return wrapper
+            wrapped = wrapper
+        wrapped.__relock_tool__ = tool
+        wrapped.__wrapped__ = fn
+        self._wrappers.add(wrapped)
+        return wrapped
 
     tool = wrap
 

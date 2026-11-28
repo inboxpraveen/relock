@@ -17,22 +17,39 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
-from .episode import evidence_for_rewriter
+from .episode import REWRITER_EVIDENCE, _trusted_citations, evidence_for_rewriter
 from .memory import Memory
 from .rewriters import RewriteRequest, build_prompt
+from .types import NotFoundError
+
+
+def _episode_task(memory: Memory, episode_id: str | None) -> str:
+    if not episode_id:
+        return ""
+    try:
+        return str(memory.store.get_episode(episode_id).get("task") or "")
+    except NotFoundError:  # removed since; the prompt then lacks the task the rewriter saw
+        return ""
 
 
 def rewrite_records(memory: Memory) -> Iterator[dict[str, Any]]:
+    """One record per rewrite. ``prompt`` is rebuilt as the episode built it under ``memory.policy``
+    (an episode given its own ``policy=`` may have sanitised evidence differently)."""
+    policy = memory.policy
     for row in memory.store.iter_rewrites():
         new = row["item"]
         if new.parent_version is None:
             continue
         old = memory.get(new.id, new.parent_version)
         errors = memory.store.errors_by_ids(list(new.evidence))
-        evidence = tuple(evidence_for_rewriter(e, memory.policy) for e in errors)
-        cited = {c for e in errors for c in (e["diff"].get("clause_ids") or [])}
-        request = RewriteRequest(item=old, evidence=evidence, editable=frozenset(cited) if cited else None,
-                                 max_ops=memory.policy.max_ops, max_clause_chars=memory.policy.max_clause_chars)
+        evidence = tuple(evidence_for_rewriter(e, policy) for e in errors[-REWRITER_EVIDENCE:])
+        editable: frozenset[str] | None = None
+        if policy.edit_scope == "cited":  # as the episode does: only trusted citations narrow the edit
+            cited = {c for e in errors for c in _trusted_citations(e, policy)}
+            editable = frozenset(cited) if cited else None
+        request = RewriteRequest(item=old, evidence=evidence, editable=editable,
+                                 task=_episode_task(memory, new.episode_id), max_ops=policy.max_ops,
+                                 max_clause_chars=policy.max_clause_chars)
         yield {
             "type": "rewrite",
             "item": new.ref,

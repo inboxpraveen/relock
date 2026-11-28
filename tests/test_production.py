@@ -500,7 +500,7 @@ def test_prune_cli_reports_a_dry_run(tmp_path, capsys):
     time.sleep(0.05)
     assert main(["--db", db, "prune", "--older-than", "0s", "--dry-run"]) == 0
     assert "would delete 1 episode(s)" in capsys.readouterr().out
-    assert main(["--db", db, "prune", "--older-than", "0s", "--json"]) == 0
+    assert main(["--db", db, "prune", "--older-than", "0s", "--force", "--json"]) == 0
     assert '"episodes": 1' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         main(["--db", db, "prune", "--older-than", "30"])  # no unit

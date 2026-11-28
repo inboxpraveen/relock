@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from ._util import tokenize, truncate
-from .delta import DeltaError, Op, parse_ops, validate
+from .delta import DeltaError, Op, _norm, parse_ops, validate
 from .llm import extract_json
 from .types import Item
 
@@ -100,8 +100,12 @@ class HintRewriter:
             counts = Counter(e.correction for e in corrections)
             best = max(counts.values())
             chosen = next(e.correction for e in reversed(corrections) if counts[e.correction] == best) or ""
-        chosen = truncate(chosen.strip(), request.max_clause_chars)
+        chosen = chosen.strip()
+        if len(chosen) > request.max_clause_chars:  # cut short, it would be a broken instruction
+            return None
         clauses = request.item.clauses
+        if any(_norm(c.text) == _norm(chosen) for c in clauses):  # memory already says this
+            return None
         pool = [c for c in clauses if request.editable is None or c.id in request.editable]
         if not pool:
             return Proposal([Op("add", text=chosen)], "no editable clause; adding correction", self.name)
@@ -176,13 +180,17 @@ def build_prompt(request: RewriteRequest) -> str:
     )
 
 
+_DEFAULT_FALLBACK: Any = object()
+
+
 class LLMRewriter:
     """Rewriter backed by any text-completion callable (local or hosted).
 
     ``llm`` is any ``Callable[[str], str]``: :class:`~relock_memory.llm.OpenAICompatible`,
     a LiteLLM wrapper, an Anthropic or OpenAI SDK lambda, a vLLM engine...
     Invalid JSON or an illegal delta is fed back to the model for another
-    attempt; after ``max_attempts`` the ``fallback`` rewriter is used.
+    attempt; after ``max_attempts`` the ``fallback`` rewriter is used
+    (:class:`HintRewriter` by default; pass ``fallback=None`` for none).
     """
 
     def __init__(
@@ -190,12 +198,17 @@ class LLMRewriter:
         llm: Callable[[str], str],
         *,
         max_attempts: int = 3,
-        fallback: Rewriter | None = None,
+        fallback: Rewriter | None = _DEFAULT_FALLBACK,
         name: str | None = None,
     ) -> None:
+        if not callable(llm):
+            raise TypeError(f"LLMRewriter needs a callable llm(prompt) -> str, not {type(llm).__name__}")
+        if fallback is not None and fallback is not _DEFAULT_FALLBACK and not callable(
+                getattr(fallback, "propose", None)):
+            raise TypeError(f"fallback must be a rewriter with propose(request), not {type(fallback).__name__}")
         self.llm = llm
-        self.max_attempts = max_attempts
-        self.fallback = fallback if fallback is not None else HintRewriter()
+        self.max_attempts = max(1, int(max_attempts))
+        self.fallback: Rewriter | None = HintRewriter() if fallback is _DEFAULT_FALLBACK else fallback
         self.name = name or f"llm:{getattr(llm, 'model', getattr(llm, '__name__', 'callable'))}"
         self.last_error: str | None = None
 
@@ -214,12 +227,15 @@ class LLMRewriter:
                             request.item.ref, request.item.version, type(e).__name__, e)
                 break
             try:
-                data: Any = extract_json(raw)
+                if not isinstance(raw, str):
+                    raise DeltaError(f"the model returned {type(raw).__name__}, not text")
+                data: Any = extract_json(raw, prefer_key="ops")
                 if isinstance(data, list):
                     data = {"ops": data}
-                if not isinstance(data, dict):
+                if not isinstance(data, dict) or "ops" not in data:
                     raise DeltaError("reply must be a JSON object with an 'ops' list")
-                ops = parse_ops(data.get("ops") or [])
+                found = data["ops"]
+                ops = parse_ops([found] if isinstance(found, dict) else (found or []))
                 rationale = str(data.get("rationale") or "")
                 if not ops:
                     return None

@@ -5,14 +5,24 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import sys
+from datetime import timedelta
 from typing import Any
 
 from . import __version__
 from .delta import diff as clause_diff
-from .memory import Memory
+from .memory import KEEP_EVENTS, Memory
+from .stores import SQLiteStore
 from .types import Item, RelockError
+
+log = logging.getLogger("relock_memory.cli")
+
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+DEFAULT_PORT = 8765
+MIN_PRUNE_AGE = timedelta(hours=1)
+MAX_AGE = timedelta(days=36525)  # 100 years; beyond this, "now - age" leaves the calendar
 
 
 def _out(obj: Any) -> None:
@@ -109,10 +119,22 @@ def cmd_rollback(args: argparse.Namespace, mem: Memory) -> int:
 
 
 def cmd_edit(args: argparse.Namespace, mem: Memory) -> int:
+    targets = [cid for cid, _ in args.replace or ()] + list(args.remove or ())
+    twice = sorted({cid for cid in targets if targets.count(cid) > 1})
+    if twice:
+        print(f"error: clause {', '.join(twice)} is named by more than one --replace/--remove; "
+              "give each clause one operation", file=sys.stderr)
+        return 2
+    if args.after is not None and not args.add:
+        print("error: --after places --add clauses; pass --add TEXT", file=sys.stderr)
+        return 2
     ops: list[dict[str, Any]] = []
     for cid, text in args.replace or ():
         ops.append({"op": "replace", "id": cid, "text": text})
-    for text in args.add or ():
+    adds = list(args.add or ())
+    if args.after is not None:
+        adds.reverse()  # each lands right after --after, so insert the last first to keep the given order
+    for text in adds:
         ops.append({"op": "add", "text": text, "after": args.after})
     for cid in args.remove or ():
         ops.append({"op": "remove", "id": cid})
@@ -145,18 +167,73 @@ def cmd_events(args: argparse.Namespace, mem: Memory) -> int:
     return 0
 
 
+def _positive_int(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"invalid count {text!r}: use a whole number of at least 1")
+    return n
+
+
+def _parse_port(text: str) -> int | None:
+    text = text.strip()
+    return int(text) if text.isascii() and text.isdigit() and int(text) <= 65535 else None
+
+
+def _port_arg(text: str) -> int:
+    port = _parse_port(text)
+    if port is None:
+        raise argparse.ArgumentTypeError(f"invalid port {text!r}: use a number from 0 to 65535")
+    return port
+
+
+def _env_port() -> int:
+    raw = os.environ.get("RELOCK_PORT", "")
+    if not raw.strip():
+        return DEFAULT_PORT
+    port = _parse_port(raw)
+    if port is None:  # e.g. Kubernetes sets RELOCK_PORT=tcp://<ip>:<port> for a Service named "relock"
+        log.warning("ignoring RELOCK_PORT=%r: not a port number; serving on %d (use --port to choose)",
+                    raw, DEFAULT_PORT)
+        return DEFAULT_PORT
+    return port
+
+
 def _age_arg(text: str) -> str:
     from ._util import parse_age
 
+    number = text.strip()[:-1]
     try:
-        parse_age(text)
+        finite = math.isfinite(float(number))
+    except ValueError:
+        finite = True  # not a number at all: parse_age explains the format
+    if not finite:
+        raise argparse.ArgumentTypeError(f"invalid age {text!r}: not a finite number")
+    try:
+        age = parse_age(text)
+    except OverflowError:
+        age = MAX_AGE + MAX_AGE
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
+    if age > MAX_AGE:
+        raise argparse.ArgumentTypeError(f"invalid age {text!r}: at most 100 years (36525d)")
     return text
 
 
 def cmd_prune(args: argparse.Namespace, mem: Memory) -> int:
-    counts = mem.prune(args.older_than, dry_run=args.dry_run)
+    from ._util import parse_age
+
+    if parse_age(args.older_than) < MIN_PRUNE_AGE and not (args.force or args.dry_run):
+        print(f"error: refusing --older-than {args.older_than} (under 1h) without --force. Prune can't see "
+              "episodes open in other processes (agents, 'relock serve', 'relock mcp'): one idle past the "
+              "cutoff is marked abandoned and its detail deleted, so its next writes fail and its evidence "
+              "is lost. Use an age longer than any episode stays open (e.g. 30d), or pass --force if nothing "
+              "else uses this database.", file=sys.stderr)
+        return 2
+    keep = tuple(dict.fromkeys((*KEEP_EVENTS, *(args.keep_events or ()))))
+    counts = mem.prune(args.older_than, dry_run=args.dry_run, keep_events=keep)
     if args.json:
         _out(counts)
         return 0
@@ -169,7 +246,7 @@ def cmd_prune(args: argparse.Namespace, mem: Memory) -> int:
     if counts["episodes_abandoned"]:
         print(f"{'would mark' if args.dry_run else 'marked'} {counts['episodes_abandoned']} idle open episode(s) "
               "as abandoned")
-    if not args.dry_run and not str(args.db).startswith(("postgres://", "postgresql://")):
+    if not args.dry_run and isinstance(mem.store, SQLiteStore):
         print("SQLite keeps the file size until you run: sqlite3 <db> VACUUM")
     return 0
 
@@ -188,11 +265,7 @@ def cmd_export(args: argparse.Namespace, mem: Memory) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    try:
-        from .integrations.mcp import serve
-    except ImportError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
+    from .integrations.mcp import _load_server_class, serve
 
     verifiers: dict[str, str] = {}
     for spec in args.verifier or ():
@@ -204,9 +277,11 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     if args.cwd is not None and not os.path.isdir(args.cwd):
         print(f"error: --cwd {args.cwd!r} is not a directory", file=sys.stderr)
         return 2
+    _load_server_class()  # without the mcp extra, fail before touching the database
     serve(args.db, transport=args.transport, rewriter=_llm_rewriter(args), verifiers=verifiers,
           verifier_timeout=args.verifier_timeout, verifier_cwd=args.cwd,
           trust_agent_reports=args.trust_agent_reports,
+          trust_verifier_output=not args.untrusted_verifier_output,
           allow_teach=args.allow_teach, idle_timeout=args.idle_timeout or None, k=args.k)
     return 0
 
@@ -215,29 +290,36 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from .integrations.http import serve
 
     token = os.environ.get("RELOCK_TOKEN") or None
-    try:
-        serve(args.db, host=args.host, port=args.port, token=token, rewriter=_llm_rewriter(args),
-              idle_timeout=args.idle_timeout or None, k=args.k)
-    except (ValueError, OSError) as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
+    port = _env_port() if args.port is None else args.port
+    serve(args.db, host=args.host, port=port, token=token, rewriter=_llm_rewriter(args),
+          idle_timeout=args.idle_timeout or None, k=args.k)
     return 0
+
+
+def _add_global_options(p: argparse.ArgumentParser, default: Any) -> None:
+    # Environment variables are read after parsing, so a bad one only affects the command that uses it.
+    p.add_argument("--log-level", default=default, choices=LOG_LEVELS, type=str.upper,
+                   help="log relock events to stderr at this level (default: $RELOCK_LOG_LEVEL; "
+                        "'serve' logs INFO when unset)")
+    p.add_argument("--db", default=default,
+                   help="SQLite path, sqlite:/// or file: URI, or postgresql:// URL (default: $RELOCK_DB or "
+                        "./relock.db). $RELOCK_PG_POOL_SIZE sizes the Postgres pool (default 5)")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="relock", description="Agent memory that unlocks on recall, rewrites on "
                                                            "surprise, and re-locks.")
     p.add_argument("--version", action="version", version=f"relock {__version__}")
-    p.add_argument("--log-level", default=os.environ.get("RELOCK_LOG_LEVEL"),
-                   choices=["DEBUG", "INFO", "WARNING", "ERROR"], type=str.upper,
-                   help="log relock events to stderr at this level (default: $RELOCK_LOG_LEVEL; "
-                        "'serve' logs INFO when unset)")
-    p.add_argument("--db", default=os.environ.get("RELOCK_DB", "relock.db"),
-                   help="SQLite path or postgresql:// URL (default: $RELOCK_DB or ./relock.db)")
+    _add_global_options(p, None)
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    def parser(name: str, **kw: Any) -> argparse.ArgumentParser:
+        sp = sub.add_parser(name, **kw)
+        _add_global_options(sp, argparse.SUPPRESS)  # also accepted after the subcommand
+        return sp
+
     def add(name: str, fn: Any, help_: str) -> argparse.ArgumentParser:
-        sp = sub.add_parser(name, help=help_, description=help_)
+        sp = parser(name, help=help_, description=help_)
         sp.set_defaults(fn=fn)
         return sp
 
@@ -291,20 +373,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--item")
     sp.add_argument("--episode")
     sp.add_argument("--type")
-    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--limit", type=_positive_int, default=50, help="most recent events to show (default 50)")
     sp.add_argument("--json", action="store_true")
 
     sp = add("prune", cmd_prune, "Delete old audit detail (items and versions are always kept).")
     sp.add_argument("--older-than", required=True, metavar="AGE", type=_age_arg,
                     help="e.g. 30d, 12h, 2w; must exceed the longest an episode stays open in any process")
     sp.add_argument("--dry-run", action="store_true", help="only count what would be deleted")
+    sp.add_argument("--force", action="store_true",
+                    help="allow --older-than under 1h (only when no other process is using the database)")
+    sp.add_argument("--keep-events", action="append", metavar="TYPE",
+                    help="also keep events of this type, e.g. blocked (repeatable; added to the kept "
+                         f"defaults: {', '.join(KEEP_EVENTS)})")
     sp.add_argument("--json", action="store_true")
 
     add("stats", cmd_stats, "Ledger counters.")
     sp = add("export", cmd_export, "Export rewrite traces as JSONL (SFT / preference pairs).")
     sp.add_argument("out")
 
-    sp = sub.add_parser("mcp", help="Run the MCP server.", description="Run the relock MCP server.")
+    sp = parser("mcp", help="Run the MCP server.", description="Run the relock MCP server.")
     sp.set_defaults(fn=None, mcp=True)
     sp.add_argument("--transport", default="stdio", choices=["stdio", "sse", "streamable-http"])
     sp.add_argument("--verifier", action="append", metavar="NAME=COMMAND",
@@ -314,18 +401,22 @@ def build_parser() -> argparse.ArgumentParser:
                     help="directory the verifier commands run in (default: the server's working directory)")
     sp.add_argument("--trust-agent-reports", action="store_true",
                     help="let the agent's own outcome reports rewrite memory (single-user sandboxes only)")
+    sp.add_argument("--untrusted-verifier-output", action="store_true",
+                    help="keep verifier output away from the rewriter; pass/fail still counts (use when the "
+                         "agent can edit what a verifier prints, such as its tests)")
     sp.add_argument("--allow-teach", action="store_true",
                     help="expose relock_teach so the agent can add new items (agent-written content)")
     sp.add_argument("--idle-timeout", type=float, default=1800.0,
                     help="re-lock an episode after this many idle seconds (0 disables; default 1800)")
     sp.add_argument("-k", type=int, default=3, help="items per recall")
-    serve_p = sub.add_parser(
+    serve_p = parser(
         "serve", help="Run the HTTP/JSON API (any language).",
         description="Run relock's HTTP/JSON API for harnesses in any language. Set RELOCK_TOKEN to require "
                     "'Authorization: Bearer <token>'; without it the server only listens on loopback.")
     serve_p.set_defaults(fn=None, serve=True)
     serve_p.add_argument("--host", default=os.environ.get("RELOCK_HOST", "127.0.0.1"))
-    serve_p.add_argument("--port", type=int, default=int(os.environ.get("RELOCK_PORT", "8765")))
+    serve_p.add_argument("--port", type=_port_arg, default=None,
+                         help=f"default: $RELOCK_PORT if it is a port number, else {DEFAULT_PORT}")
     serve_p.add_argument("--idle-timeout", type=float, default=1800.0,
                          help="re-lock an episode after this many idle seconds (0 disables; default 1800)")
     serve_p.add_argument("-k", type=int, default=3, help="default items per recall")
@@ -338,6 +429,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("bench", help="Run RelapseBench.", add_help=False)
     sp.set_defaults(fn=None, bench=True)
     return p
+
+
+def _log_level(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str | None:
+    if args.log_level:  # the flag, already checked against LOG_LEVELS
+        return str(args.log_level)
+    raw = os.environ.get("RELOCK_LOG_LEVEL", "").strip()
+    if raw and raw.upper() not in LOG_LEVELS:
+        parser.error(f"RELOCK_LOG_LEVEL={raw!r} is not a log level; use one of {', '.join(LOG_LEVELS)}")
+    return raw.upper() or None
+
+
+def _run(args: argparse.Namespace) -> int:
+    if getattr(args, "mcp", False):
+        return cmd_mcp(args)
+    if getattr(args, "serve", False):
+        return cmd_serve(args)
+    mem = Memory(args.db)
+    try:
+        return int(args.fn(args, mem) or 0)
+    finally:
+        mem.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -355,25 +467,17 @@ def main(argv: list[str] | None = None) -> int:
         return bench_main(rest)
     if rest:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
-    if args.log_level:  # stderr only: stdout carries command output and the MCP stdio protocol
-        logging.basicConfig(level=args.log_level, stream=sys.stderr,
+    level = _log_level(parser, args)
+    if level:  # stderr only: stdout carries command output and the MCP stdio protocol
+        logging.basicConfig(level=level, stream=sys.stderr,
                             format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if getattr(args, "mcp", False):
-        return cmd_mcp(args)
-    if getattr(args, "serve", False):
-        return cmd_serve(args)
+    # Usage errors exit 2 (argparse); everything that goes wrong running a command exits 1.
     try:
-        mem = Memory(args.db)
-    except RelockError as e:
+        return _run(args)
+    except (RelockError, ImportError, OSError, ValueError, KeyError) as e:
+        log.debug("relock %s failed", args.cmd, exc_info=True)
         print(f"error: {e}", file=sys.stderr)
         return 1
-    try:
-        return int(args.fn(args, mem) or 0)
-    except (RelockError, KeyError, ValueError) as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    finally:
-        mem.close()
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -60,10 +60,17 @@ exception counts as a failure. The wrapper:
 - returns results and re-raises exceptions unchanged;
 - logs a problem it hits while recording an outcome instead of raising it, so your agent sees the
   tool's own result or exception;
+- ignores interrupts and cancellation (`KeyboardInterrupt`, `asyncio.CancelledError`, LangGraph's
+  `interrupt()`), which say nothing about the procedure;
 - does nothing outside an episode.
 
+Wrapping a tool twice is harmless: `mem.wrap` returns an already wrapped tool unchanged. A
+`functools.partial` is recorded under its function's name; other callables without a name, under
+their class name (with a warning), so pass `name=` for those.
+
 `mem.wrap_tools([f, g, h])` wraps a list. For tools you can't wrap, such as ones that run in
-another process, report the outcome yourself:
+another process, report the outcome yourself. Items named in `items=` must have been recalled in
+the episode; others are skipped with a warning.
 
 ```python
 ep.tool_result("get_orders", rows)                                 # success
@@ -88,9 +95,13 @@ raise relock.TransientToolError("upstream is down")       # never counts as evid
   HTTP 4xx such as 400, 404 or 422 counts. A `TimeoutError`, a `ConnectionError`, an HTTP 408,
   425 or 429, or any 5xx is transient and never counts. Anything unrecognised counts at half
   weight. The full rules are in the [error taxonomy](design.md#error-taxonomy).
-- **Error text from a remote server can carry injected text.** Report such failures with
-  `Signal.tool_error(exc, detail_trusted=False)`. The failure still counts, but its message
-  never reaches the rewriter.
+- **An error given only as a message**, as in `ep.tool_result("get_orders", error="...")`,
+  counts at half weight, unless it reads as transient: a timeout, a rate limit, a 5xx status or a
+  dropped connection never counts.
+- **Error text from a remote server can carry injected text.** Raise
+  `relock.ToolError(message, detail_trusted=False)`, or report the failure with
+  `Signal.tool_error(exc, detail_trusted=False)`. The failure still counts, but its message and
+  correction never reach the rewriter.
 
 ```python
 try:
@@ -116,12 +127,13 @@ rows = get_orders("2026-03-14")          # the wrapped tool resolves `exp` with 
 
 - **`clauses`** limits which clauses a rewrite may replace or remove. Cite clauses whenever you
   use an LLM rewriter, so a fix can't land on the wrong clause.
-- **`tool`** binds the expectation to a wrapped tool, whose next call resolves it. List the tool
-  in the item's `tools` too.
-- **`check`** decides whether the result matches. The built-ins in `relock_memory.checks` are
-  `succeeds()`, `equals(x)`, `non_empty()`, `has_keys(*keys)`, `matches(regex)`, `predicate(fn)`
-  and `schema(json_schema)`. Any `(result, error) -> (bool, reason)` callable also works. A call
-  that raises always counts as a failure; the check judges what a call returns.
+- **`tool`** binds the expectation to a wrapped tool, whose next call resolves it, whether or
+  not the item lists that tool in `tools`.
+- **`check`** decides whether the outcome matches. The built-ins in `relock_memory.checks` are
+  `succeeds()`, `fails()`, `equals(x)`, `non_empty()`, `has_keys(*keys)`, `matches(regex)`,
+  `predicate(fn)` and `schema(json_schema)`. Any `(result, error) -> (bool, reason)` callable also
+  works. The check sees what the call returned or raised, so `fails()` matches a call that raises.
+  A transient error never matches, and a check that itself raises counts as a mismatch.
 
 Without a `tool`, resolve the expectation yourself: `ep.observe(exp, result)` or
 `ep.observe(exp, error=exc)`. Each expectation resolves once; open ones are voided when the
@@ -152,7 +164,13 @@ Every call returns an `Observation` whose `decision` says what happened: `confir
 (with the evidence so far and the amount required), `rewritten` (with the new version and its
 delta), `blocked` (untrusted or transient), `declined` (the rewriter proposed no change),
 `invalid_edit` (the proposed edit broke a rule), `conflict` (another episode rewrote the item
-first) or `ignored` (a success reported by an untrusted source).
+first) or `ignored`. A success is `ignored` when an untrusted source reports it, or when it comes
+right after a failure of the same tool in the same episode that carried a correction: the agent
+most likely followed the correction, so the success says nothing for the stored rule (see
+[flake damping](design.md#admission-trust-gate)).
+
+An authenticated correction that the rewriter declines, or turns into an invalid edit, is closed
+rather than left pending, so it can't carry later failures past the evidence threshold.
 
 ## Several agents, threads and asyncio
 
@@ -220,8 +238,10 @@ with mem.episode("deploy build 4242"):
 The handler records the real outcome of every tool run in the active episode, so your existing
 tools stay untouched. Keep in mind:
 
-- **Use the handler or `@mem.wrap` on a tool, not both.** With both, every outcome is recorded
-  twice.
+- **A tool can also be wrapped with `@mem.wrap`.** The handler records the call and the wrapper
+  stands aside, so each call counts once.
+- **Interrupts are not failures.** LangGraph's `interrupt()`, `Command(goto=...)` and cancelled
+  runs are never recorded.
 - **Run the graph inside an episode**, as above. The handler records nothing outside one.
 - **Let tools raise.** LangChain reports a raised exception through `on_tool_error`, including
   inside LangGraph's `ToolNode`, and a `ToolMessage` with `status="error"` also counts as a

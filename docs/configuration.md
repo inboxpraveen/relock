@@ -20,7 +20,7 @@ mem = relock.Memory(
 relock.WritePolicy(
     min_evidence=2.0,            # weighted trusted errors before a rewrite
     inertia=0.5,                 # extra evidence per ln(1 + confirmations) of the current version
-    confirmation_cancels=1.0,    # a later trusted success cancels this much pending evidence
+    confirmation_cancels=1.0,    # a later trusted success of the same tool cancels this much pending evidence
     rewrite_on="observe",        # or "close": rewrite only when the episode ends
     edit_scope="cited",          # replace/remove only clauses the prediction relied on, if it cited any
     max_ops=4,                   # most clause operations in one rewrite
@@ -40,7 +40,9 @@ relock.WritePolicy(
 | `WritePolicy.trust_agent()` | Also trust the agent's own reports. Local, single-user sandboxes only. |
 
 Change one field of any policy with `policy.with_(min_evidence=1.0)`. Set a policy for one
-agent with `mem.episode(task, policy=...)` or `Toolkit(mem, policy=...)`.
+agent with `mem.episode(task, policy=...)` or `Toolkit(mem, policy=...)`. A setting that makes no
+sense, such as a negative threshold, an unknown `rewrite_on` or an unknown source name, raises
+`ValueError` when the policy is built.
 
 **Evidence and weights.** A failure counts with weight `source_weight * class_weight`. Tools and
 verifiers weigh 1 and authenticated users 2. Programmatic and semantic errors weigh 1, unknown
@@ -62,7 +64,7 @@ proposes against the policy before anything is written.
 | rewriter | how it writes the fix |
 |---|---|
 | `HintRewriter()` (default) | Deterministic, no model. Applies the `correction` carried by trusted errors: authenticated users first, then the most frequent, then the most recent. It replaces the cited clause, or the most similar clause when none was cited, and adds a clause when nothing is similar. Without a correction it declines, and the evidence waits. |
-| `LLMRewriter(llm)` | A model reads the item, the evidence and the clause ids, and returns a JSON edit. Invalid output is fed back for up to `max_attempts=3` tries, then it falls back to `HintRewriter`. |
+| `LLMRewriter(llm)` | A model reads the item, the evidence and the clause ids, and returns a JSON edit. Invalid output is fed back for up to `max_attempts=3` tries, then it falls back to `HintRewriter` (`fallback=None` for none). |
 | `CallableRewriter(fn)` | Your own function from a `RewriteRequest` to ops. |
 
 `llm` is any `Callable[[str], str]`. `OpenAICompatible` is a dependency-free client for vLLM,
@@ -75,6 +77,8 @@ mem = relock.Memory("agent.db", rewriter=relock.LLMRewriter(llm))
 ```
 
 With no arguments it reads `RELOCK_LLM_BASE_URL`, `RELOCK_LLM_MODEL` and `RELOCK_LLM_API_KEY`.
+`OPENAI_API_KEY` is used only when the base URL is `api.openai.com`; it is never sent to another
+endpoint.
 
 ### Small open models
 
@@ -109,8 +113,11 @@ comfortable into the tens of thousands of items; see [measured scale](production
 | SQLite (default) | `Memory("agent.db")` | WAL mode, safe across processes on one machine. `":memory:"` for tests and notebooks. |
 | Postgres | `Memory("postgresql://user:pw@host/db")` | Needs `relock-memory[postgres]`. Uses `JSONB` and `TIMESTAMPTZ`, so the ledger is directly queryable. |
 
-With no argument, `Memory()` opens `$RELOCK_DB`, or `./relock.db`. For pool settings, construct
-the store yourself:
+With no argument, `Memory()` opens `$RELOCK_DB`, or `./relock.db`. A path may also be a
+`pathlib.Path`, `sqlite:///relative.db`, `sqlite:////absolute.db` or a SQLite `file:` URI such as
+`file:agent.db?mode=ro`. `postgres://` and `postgresql+psycopg://` URLs work like
+`postgresql://`; any other `scheme://` raises `ValueError`. `$RELOCK_PG_POOL_SIZE` sets the
+Postgres pool size (default 5). For other pool settings, construct the store yourself:
 
 ```python
 from relock_memory.stores.postgres import PostgresStore

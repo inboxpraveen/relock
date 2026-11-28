@@ -32,7 +32,8 @@ Unlock on recall, rewrite on surprise, re-lock.
    does this automatically: "this call succeeds".
 3. **Prediction error is the write trigger.** A mismatch counts only if the signal is trusted and
    not transient. Evidence accumulates until it reaches a threshold, which grows with how often
-   the current version has been confirmed. A later success cancels a one-off flake.
+   the current version has been confirmed. A later success of the same tool cancels a one-off
+   flake.
 4. **Overwrite in place.** The rewrite is a small clause-level delta (`replace`, `add`,
    `remove`) limited to the clauses that fired. The old version is kept as `superseded` and is
    never retrievable again. The database allows exactly one active version per item, so "do X"
@@ -79,7 +80,9 @@ see what tried to change memory. On top of the trust gate:
 - An **evidence threshold** stops a single noisy failure from rewriting a good procedure. Two
   weighted trusted errors by default.
 - **Inertia** makes well-proven versions need more evidence: `+0.5 * ln(1 + confirmations)`.
-- **Flake damping** cancels a pending error when the same version is later confirmed.
+- **Flake damping** cancels a pending error when a later call of the same tool confirms the same
+  version. A success in the same task right after a failure that carried a correction is not
+  counted, since the agent most likely followed the correction rather than the stored rule.
 - **Edit scope** limits a rewrite to the clauses the failed prediction relied on, when it cites
   them (`ep.expect(..., clauses=["c2"])`). Automatic expectations from `@mem.wrap` cite none, so
   there the rewriter picks the clause; `HintRewriter` replaces the clause most similar to the

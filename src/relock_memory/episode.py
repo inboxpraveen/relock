@@ -47,6 +47,9 @@ log = logging.getLogger("relock_memory")
 MAX_TEXT = 2000
 """Longest error message, reason or query text stored in the ledger; longer text is cut."""
 
+REWRITER_EVIDENCE = 20
+"""Most recent pending errors shown to the rewriter for one rewrite (all of them are consumed)."""
+
 _MISSING: Any = object()
 
 
@@ -71,6 +74,7 @@ class Episode:
         self._n_expectations = 0
         self._rewrites: Counter[str] = Counter()
         self._declined: dict[str, tuple[str, ...]] = {}
+        self._claims: Counter[str] = Counter()  # tools whose outcome a framework callback is recording
         self._token: Any = None
         self._owner: Any = None  # the Toolkit that opened this episode for itself, if any
         self.summary: dict[str, Any] = {}
@@ -282,22 +286,26 @@ class Episode:
                 signal = signal.with_(message=truncate(signal.message, MAX_TEXT),
                                       correction=truncate(signal.correction, MAX_TEXT) if signal.correction else None)
             value = None if result is _MISSING else result
+            # What a check sees as the error: the exception, or one standing in for an error message.
+            failure = exc if exc is not None else (RuntimeError(str(error)) if error is not None else None)
 
             if matched is not None:
                 is_match, reason = bool(matched), "reported by caller"
-            elif signal.passed is not None and (signal.source is not Source.TOOL or error is not None
-                                                or exp.check is None or explicit_failure):
+            elif exp.check is not None and (signal.passed is None or (
+                    signal.source is Source.TOOL and not explicit_failure
+                    and signal.error_class is not ErrorClass.TRANSIENT)):
+                # The tool's own outcome, judged by the expectation's check (fails() expects a raise).
+                is_match, reason = _run_check(exp, value, failure)
+                if failure is not None and not is_match:
+                    reason = signal.message or reason
+            elif signal.passed is not None:
                 is_match = bool(signal.passed)
                 reason = signal.message or ("passed" if is_match else "failed")
-            elif exp.check is not None:
-                is_match, reason = exp.check(value, exc)
-                if error is not None and exc is None:
-                    is_match, reason = False, str(error)
             else:
-                is_match, reason = error is None, ("completed" if error is None else str(error))
+                is_match, reason = failure is None, ("completed" if failure is None else str(error))
 
             reason = truncate(str(reason), MAX_TEXT)
-            err_text = f"{type(exc).__name__}: {exc}" if exc else (str(error) if error else None)
+            err_text = f"{type(exc).__name__}: {exc}" if exc is not None else (str(error) if error else None)
             outcome = {"result": short_repr(value, 400) if result is not _MISSING else None,
                        "error": truncate(err_text, MAX_TEXT) if err_text else None}
             self.store.resolve_expectation(exp.id, matched=is_match, outcome=outcome, signal=signal.to_dict())
@@ -326,28 +334,43 @@ class Episode:
             self.memory._emit("confirm_ignored", episode_id=self.id, item_id=exp.item_id, version=exp.version,
                               data={"expectation_id": exp.id, "source": signal.source.value})
             return Observation(exp.id, True, reason, d)
+        pending = self.store.errors(exp.item_id, exp.version, status="pending")
+        corrected = [e for e in pending if e["episode_id"] == self.id and e["diff"].get("tool") == exp.tool
+                     and _has_usable_correction(e)]
+        if corrected:
+            # This task already failed here with a stated fix: a success now most likely followed
+            # that fix, not the stored procedure. Counting it would cancel the evidence and raise
+            # the threshold, so the procedure would never be corrected.
+            why = (f"success after a corrected failure in this episode ({corrected[-1]['id']}); "
+                   "not counted as a confirmation")
+            d = Decision(Verdict.IGNORED, why, exp.item_id, exp.version)
+            self.memory._emit("confirm_ignored", episode_id=self.id, item_id=exp.item_id, version=exp.version,
+                              data={"expectation_id": exp.id, "source": signal.source.value, "reason": why})
+            return Observation(exp.id, True, reason, d)
         self.store.bump_confidence(exp.item_id, exp.version, d_alpha=1.0, d_confirm=1)
-        cancelled = self._cancel_pending(exp.item_id, exp.version)
+        cancelled = self._cancel_pending(exp, pending)
         d = Decision(Verdict.CONFIRMED, "prediction held" + (f"; cancelled {len(cancelled)} pending error(s)"
                      if cancelled else ""), exp.item_id, exp.version)
         self.memory._emit("confirm", episode_id=self.id, item_id=exp.item_id, version=exp.version,
                           data={"expectation_id": exp.id, "cancelled": cancelled})
         return Observation(exp.id, True, reason, d)
 
-    def _cancel_pending(self, item_id: str, version: int) -> list[str]:
+    def _cancel_pending(self, exp: Expectation, pending: list[dict[str, Any]]) -> list[str]:
+        """Flake damping: a confirmed prediction cancels earlier pending errors of the same tool."""
         budget = self.policy.confirmation_cancels
         if budget <= 0:
             return []
-        cancelled: list[str] = []
-        for e in self.store.errors(item_id, version, status="pending"):
-            if e["authoritative"] or e["weight"] > budget + 1e-9:
+        chosen: list[str] = []
+        for e in pending:
+            if e["authoritative"] or e["diff"].get("tool") != exp.tool or e["weight"] > budget + 1e-9:
                 continue
-            cancelled.append(e["id"])
+            chosen.append(e["id"])
             budget -= e["weight"]
             if budget <= 1e-9:
                 break
-        self.store.set_error_status(cancelled, "cancelled", "later prediction confirmed (flake damping)")
-        return cancelled
+        # Only errors still pending change: one a concurrent rewrite consumed stays consumed.
+        return self.store.set_error_status(chosen, "cancelled", "later prediction confirmed (flake damping)",
+                                           only_from="pending")
 
     def _on_error(self, exp: Expectation, signal: Signal, reason: str, outcome: dict[str, Any],
                   exc: BaseException | None) -> Observation:
@@ -435,7 +458,7 @@ class Episode:
             editable = frozenset(cited) if cited else None
         request = RewriteRequest(
             item=current,
-            evidence=tuple(evidence_for_rewriter(e, self.policy) for e in pending),
+            evidence=tuple(evidence_for_rewriter(e, self.policy) for e in pending[-REWRITER_EVIDENCE:]),
             editable=editable,
             task=self.task,
             max_ops=self.policy.max_ops,
@@ -449,6 +472,7 @@ class Episode:
                         getattr(rewriter, "name", type(rewriter).__name__), item_id, current.version, self.id,
                         exc_info=True)
             self._declined[item_id] = ids
+            self._drop_authoritative(pending, f"the rewriter raised {type(e).__name__}")
             self.memory._emit("rewriter_error", episode_id=self.id, item_id=item_id, version=current.version,
                               data={"error": f"{type(e).__name__}: {e}"})
             return Decision(Verdict.DECLINED, f"rewriter raised {type(e).__name__}: {e}", **base)
@@ -456,6 +480,7 @@ class Episode:
             self._declined[item_id] = ids
             failure = getattr(rewriter, "last_error", None)
             why = f"rewriter proposed no change ({failure})" if failure else "rewriter proposed no change"
+            self._drop_authoritative(pending, why)
             self.memory._emit("declined", episode_id=self.id, item_id=item_id, version=current.version,
                               data={"evidence": list(ids), "reason": why})
             return Decision(Verdict.DECLINED, why, **base)
@@ -464,6 +489,7 @@ class Episode:
                      max_ops=self.policy.max_ops, max_clause_chars=self.policy.max_clause_chars)
         except DeltaError as e:
             self._declined[item_id] = ids
+            self._drop_authoritative(pending, f"the rewriter's edit was invalid: {e}")
             self.memory._emit("invalid_edit", episode_id=self.id, item_id=item_id, version=current.version,
                               data={"error": str(e), "ops": [o.to_dict() for o in proposal.ops]})
             return Decision(Verdict.INVALID_EDIT, str(e), **base)
@@ -508,6 +534,14 @@ class Episode:
         return Decision(Verdict.REWRITTEN, f"v{current.version} -> v{new.version} ({proposal.author})",
                         item_id, current.version, new.version, evidence, required, new.delta)
 
+    def _drop_authoritative(self, pending: list[dict[str, Any]], why: str) -> None:
+        """An authenticated correction the rewriter could not apply is closed, not left pending:
+        otherwise every later failure of the item would skip the evidence threshold with it."""
+        ids = [e["id"] for e in pending if e["authoritative"]]
+        if ids:
+            self.store.set_error_status(ids, "cancelled", truncate(f"not applied: {why}", MAX_TEXT),
+                                        only_from="pending")
+
     @staticmethod
     def _to_evidence(e: dict[str, Any], policy: WritePolicy | None = None) -> Evidence:
         return evidence_for_rewriter(e, policy or WritePolicy())
@@ -542,9 +576,10 @@ class Episode:
         Returns one observation per resolved expectation, or none if no recalled item governs
         the tool.
         """
+        refs = [items] if isinstance(items, str) else (list(items) if items else None)
         with self._lock:  # bind and resolve atomically, so concurrent reports never collide
             self._ensure_open()
-            exps = self._bind_tool(tool, list(items) if items else None)
+            exps = self._bind_tool(tool, refs, warn_unrecalled=True)
             args = () if result is None else (result,)
             if signal is not None:
                 return [self.observe(e, *args, signal=signal) for e in exps]
@@ -552,17 +587,29 @@ class Episode:
                 return [self.observe(e, *args, error=error) for e in exps]
             return [self.observe(e, result) for e in exps]
 
-    def _bind_tool(self, tool: str, refs: list[str] | None) -> list[Expectation]:
-        """Expectations a wrapped tool call should resolve (explicit ones first, else automatic)."""
+    def _bind_tool(self, tool: str, refs: list[str] | None, *, warn_unrecalled: bool = False) -> list[Expectation]:
+        """Expectations a tool call should resolve: for each target item, its oldest open explicit
+        expectation bound to ``tool``, else a new automatic ``succeeds()`` one.
+
+        Targets are the recalled items in ``refs``, or else every recalled item that lists the
+        tool, or holds an explicit expectation bound to it, or (with ``attribute_undeclared``)
+        lists no tools at all.
+        """
         if self.closed:
             return []
         with self._lock:
             if refs:
-                targets = [self._labile[i] for i in (self._item_id(r) for r in refs) if i in self._labile]
+                ids = [self._item_id(r) for r in refs]
+                missing = [r for r, i in zip(refs, ids) if i not in self._labile]
+                if missing and warn_unrecalled:
+                    log.warning("relock: tool_result(%r, items=%r): %s not recalled in episode %s, so the "
+                                "outcome is not recorded for them. Recall or use() an item first.",
+                                tool, refs, ", ".join(map(repr, missing)), self.id)
+                targets = [self._labile[i] for i in dict.fromkeys(ids) if i in self._labile]
             else:
-                targets = [i for i in self._labile.values() if tool in i.tools]
-                if self.policy.attribute_undeclared:
-                    targets += [i for i in self._labile.values() if not i.tools]
+                undeclared = self.policy.attribute_undeclared
+                targets = [i for i in self._labile.values()
+                           if tool in i.tools or (i.id, tool) in self._explicit or (undeclared and not i.tools)]
             out: list[Expectation] = []
             for item in targets:
                 open_ids = self._explicit.get((item.id, tool))
@@ -571,6 +618,22 @@ class Episode:
                 else:
                     out.append(self.expect(item, f"{tool} succeeds", check=succeeds(), tool=tool, _auto=True))
             return out
+
+    # A framework callback that records a tool's outcome itself (LangChain's handler) claims the
+    # tool for the duration of the call, so a @mem.wrap inside the same tool doesn't record it again.
+    def _claim_tool(self, tool: str) -> None:
+        with self._lock:
+            self._claims[tool] += 1
+
+    def _release_tool(self, tool: str) -> None:
+        with self._lock:
+            self._claims[tool] -= 1
+            if self._claims[tool] <= 0:
+                del self._claims[tool]
+
+    def _tool_claimed(self, tool: str) -> bool:
+        with self._lock:
+            return self._claims.get(tool, 0) > 0
 
     def _observe_quietly(self, exps: list[Expectation], **kwargs: Any) -> list[Observation]:
         out = []
@@ -583,25 +646,33 @@ class Episode:
 
     def close(self) -> dict[str, Any]:
         """Re-lock. Optionally reconsolidates first (``rewrite_on="close"``). Idempotent."""
-        with self._lock:
-            if self.closed:
-                return self.summary
-            decisions = []
-            if self.policy.rewrite_on == "close":
-                for item_id in list(self._labile):
-                    decisions.append(self._reconsolidate(item_id))
-            self.store.close_episode(self.id)
-            self.closed = True
-            self.summary = {
-                "episode_id": self.id,
-                "recalled": sorted(i.ref for i in self._labile.values()),
-                "expectations": self._n_expectations,
-                "rewrites": dict(self._rewrites),
-                "close_decisions": [d.to_dict() for d in decisions if d.verdict is not Verdict.PENDING
-                                    or d.evidence > 0],
-            }
+        try:
+            with self._lock:
+                if self.closed:
+                    return self.summary
+                decisions: list[Decision] = []
+                try:
+                    if self.policy.rewrite_on == "close":
+                        for item_id in list(self._labile):
+                            decisions.append(self._reconsolidate(item_id))
+                    self.store.close_episode(self.id)
+                finally:
+                    # Re-locked even when the store failed: nothing may write through it any more.
+                    # (A row left open is marked abandoned by a later `relock prune`.)
+                    self.closed = True
+                    self._expectations.clear()
+                    self._explicit.clear()
+                    self.summary = {
+                        "episode_id": self.id,
+                        "recalled": sorted(i.ref for i in self._labile.values()),
+                        "expectations": self._n_expectations,
+                        "rewrites": dict(self._rewrites),
+                        "close_decisions": [d.to_dict() for d in decisions if d.verdict is not Verdict.PENDING
+                                            or d.evidence > 0],
+                    }
+        finally:
+            self.memory._unregister(self)
         self.memory._emit("relock", episode_id=self.id, data=self.summary)
-        self.memory._unregister(self)
         return self.summary
 
 
@@ -611,6 +682,22 @@ DETAIL_WITHHELD = "(detail withheld: may contain untrusted content)"
 
 def _agent_untrusted(diff: dict[str, Any], policy: WritePolicy) -> bool:
     return diff.get("expected_by") == "agent" and Source.AGENT not in policy.trusted_sources
+
+
+def _run_check(exp: Expectation, value: Any, failure: BaseException | None) -> tuple[bool, str]:
+    """Run an expectation's check. A check that raises is a mismatch, never a crash."""
+    try:
+        ok, why = exp.check(value, failure)  # type: ignore[misc]
+    except Exception as e:
+        return False, truncate(f"check {getattr(exp.check, 'spec', 'check')} raised {type(e).__name__}: {e}",
+                               MAX_TEXT)
+    return bool(ok), str(why)
+
+
+def _has_usable_correction(e: dict[str, Any]) -> bool:
+    """Whether an error carries a correction the rewriter would see."""
+    sig = e["diff"].get("signal") or {}
+    return bool(sig.get("correction")) and sig.get("detail_trusted", True) is not False
 
 
 def _trusted_citations(e: dict[str, Any], policy: WritePolicy) -> tuple[str, ...]:

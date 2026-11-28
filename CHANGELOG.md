@@ -1,5 +1,144 @@
 # Changelog
 
+## 0.3.1 - 2026-11-28
+
+A review of the whole framework: gaps in how memory learns from real outcomes, edge cases in the
+store, the HTTP API, the MCP server and the CLI, and clearer errors. The structural benchmark is
+unchanged.
+
+**Changes you may notice when upgrading:**
+
+- A success right after a failure of the same tool in the same episode, where the failure
+  carried a correction, is now `ignored` instead of `confirmed`. Before, an agent that read the
+  correction and retried cancelled the evidence, so the stale rule was never fixed. A success
+  now cancels pending errors only of the same tool.
+- `OPENAI_API_KEY` is sent only to `api.openai.com`. For another endpoint that needs a key, set
+  `RELOCK_LLM_API_KEY` or pass `api_key=`.
+- HTTP API:
+  - observing an expectation twice is a `409 already_observed`, not a `400`;
+  - a database failure is a `503 unavailable` (details logged, not sent), not a `400`;
+  - other methods get a JSON `405` with `Allow`, or a `404`, instead of an HTML `501`;
+  - a JSON body that repeats a key, a `verifier` field on a non-verifier source, and an invalid
+    `error.class` on any source are now `400`s.
+- CLI:
+  - an unknown `scheme://` in `--db` or `$RELOCK_DB` is an error instead of a file name;
+  - `relock prune` with an age under one hour needs `--force`;
+  - `relock events --limit` must be at least 1 (`-1` used to mean unlimited on SQLite);
+  - `relock serve` startup errors exit with 1 instead of 2.
+- `Toolkit.report_outcome` refuses words it doesn't recognise instead of reading them as a
+  failure. `confirmed`, `success`, `passed`, `ok`, `failed`, `error` and similar still work.
+- `LLMRewriter(fallback=None)` now means no fallback. The default is still `HintRewriter`.
+- An invalid `WritePolicy` (a negative threshold, an unknown `rewrite_on` or source) raises
+  `ValueError`, and `recall` / `search` with `k < 1` raise `ValueError`.
+- An MCP verifier run that times out or can't start is recorded as a transient `verifier`
+  failure (before: a `tool` failure). Neither ever counted as evidence.
+
+**Learning from real outcomes:**
+
+- `checks.fails()` matches a call that raises. The check now sees the error; a check that itself
+  raises counts as a mismatch instead of crashing the observation.
+- An explicit expectation with `tool=` is resolved by that tool's next call even when the item
+  doesn't list the tool.
+- An authenticated correction that the rewriter declines is closed, so it can't carry later
+  failures past the evidence threshold.
+- An error given only as a message (`tool_result(error="...")`, the HTTP API) is transient when
+  it reads like a timeout, a rate limit, a 5xx or a dropped connection.
+- `ToolError(..., detail_trusted=False)` keeps a tool's own error text from the rewriter.
+- Interrupts and cancellation (`KeyboardInterrupt`, `asyncio.CancelledError`, LangGraph's
+  `interrupt()`) are no longer recorded as failures, by `@mem.wrap` or the LangChain handler.
+- A tool wrapped twice, or wrapped and also observed by the LangChain handler, is recorded once.
+- `@mem.wrap` never raises from its own bookkeeping, for example with an unknown `items=` key; it
+  logs a warning once. It awaits `async` callable objects, and names a `functools.partial` after
+  its function.
+- `tool_result(items=[...])` warns about items that weren't recalled instead of skipping them
+  silently.
+- `Episode.close()` re-locks the episode even when the database fails while closing.
+
+**Edits and rewriters:**
+
+- An edit is refused when it uses an unknown op, writes empty text, touches one clause twice, or
+  leaves two identical clauses. Clause ids written as `2` or `C2` are read as `c2`.
+- `LLMRewriter` retries a reply without an `ops` list, prefers the JSON object that has `ops`
+  when a reply quotes an example first, and ignores reasoning cut off before `</think>`.
+- `HintRewriter` declines a correction longer than `max_clause_chars` (it used to write it
+  truncated) or one the item already states.
+- The rewriter sees at most the 20 most recent pending errors; a rewrite consumes all of them.
+- `OpenAICompatible` reads content sent as a list of parts, and an unexpected response is a
+  clear `ToolError` instead of a `KeyError`.
+- `Memory(rewriter=...)` and `LLMRewriter(llm)` check their arguments, and `Evidence` is
+  exported for typing custom rewriters.
+
+**Storage:**
+
+- A rewrite whose evidence another process cancelled or used meanwhile rolls back as a
+  `conflict`. Flake damping changes only errors that are still pending.
+- An error stored against a version that was already superseded is stored `stale`, so it no
+  longer keeps its episode from being pruned.
+- NUL bytes and lone surrogates in text are stored as U+FFFD, and NaN or infinity in JSON as
+  null, instead of failing the write (Postgres rejected them).
+- `open_store` and `Memory` accept a `pathlib.Path`, `file:` URIs, `postgres://` and
+  `postgresql+psycopg://` URLs. `$RELOCK_PG_POOL_SIZE` sets the Postgres pool size.
+- A database directory that can't be created is a `StoreError`.
+- An id wins over a key that equals it, and `str(NotFoundError)` no longer wraps the message in
+  quotes.
+- `relock prune --dry-run` counts the expectations prune trims from abandoned episodes.
+
+**HTTP API:**
+
+- An outcome's `error` fields mean the same for every `source`: a verifier failure can be
+  transient, carry a `status` or a `class`, and mark its text `detail_trusted: false`.
+- Repeated `Content-Length` or `Transfer-Encoding` headers, and a non-ASCII `Content-Length`,
+  are refused. `HEAD` never gets a body.
+- The OpenAPI document describes recall hits (`score`, `rank`), the close summary and `author`.
+- Client disconnects are logged at DEBUG instead of printed.
+
+**MCP server:**
+
+- `--untrusted-verifier-output` (`trust_verifier_output=False`) keeps verifier output from the
+  rewriter; the pass/fail verdict still counts. The default is unchanged.
+- Verifiers run without the server's stdin, decode output as UTF-8, and a timeout kills
+  everything they started. The server warns at startup about a verifier whose program isn't
+  found, and checks the expectation before running a verifier.
+- `relock_report`'s `outcome` is `confirmed` or `failed` in the tool schema.
+- On the network transports the server warns that every client shares one episode.
+
+**Toolkit:**
+
+- Concurrent first calls share one episode instead of opening several.
+- `call()` returns an `error: ...` string for bad JSON or mistyped arguments instead of raising.
+  A bare string is accepted where a list is expected.
+
+**CLI and Docker:**
+
+- `--db` and `--log-level` work after the command too (`relock ls --db agent.db`).
+- Every command reports failures as `error: ...` with exit status 1. `relock mcp` without the
+  `mcp` extra fails before touching the database.
+- `relock prune --keep-events TYPE` keeps more event types. Ages are capped at 100 years.
+- `relock edit` keeps several `--add` clauses in order with `--after`, and refuses two
+  operations on one clause.
+- `relock serve` ignores a `RELOCK_PORT` that isn't a port number (Kubernetes sets one for a
+  Service named `relock`) with a warning.
+- `relock export` rebuilds the prompt the rewriter saw, including the task and only trusted
+  citations.
+- The Docker health check probes the HTTP API only when the container runs `serve`.
+- `relock mcp --untrusted-verifier-output` sets the MCP option above.
+
+**Authoring:**
+
+- `tools`, `tags` and `kinds` given as a single string are one name, not split into
+  characters.
+- `add(exist_ok=True)` warns without a `key` (it creates a new item each time) and when the item
+  it finds is archived.
+- Each entry of a clause list is one line; line breaks inside it are joined. A one-line string
+  loses a leading bullet, as multi-line strings already did.
+- Retrieval tokenises letters and digits in any script, so non-English items are found by their
+  own words. ASCII text tokenises as before.
+
+**Security:**
+
+- `OPENAI_API_KEY` is no longer sent to non-OpenAI endpoints (see above).
+- The HTTP API no longer echoes database paths or driver errors to clients.
+
 ## 0.3.0 - 2026-11-28
 
 Production hardening: multi-agent attribution, storage robustness, scale, retention and logging.

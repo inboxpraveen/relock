@@ -9,6 +9,7 @@ judgement can be logged, but it can never rewrite a trusted memory.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -88,9 +89,11 @@ class Signal:
             cls_ = ErrorClass(error_class) if error_class else classify_exception(error)
             message = f"{type(error).__name__}: {error}"
             correction = correction or getattr(error, "correction", None)
+            # ToolError(detail_trusted=False): the tool says its own text echoes outside content.
+            detail_trusted = detail_trusted and getattr(error, "detail_trusted", True) is not False
             data.setdefault("exception_type", type(error).__name__)
         else:
-            cls_ = ErrorClass(error_class) if error_class else ErrorClass.UNKNOWN
+            cls_ = ErrorClass(error_class) if error_class else classify_message(str(error))
             message = str(error)
         return cls(
             source=Source.TOOL,
@@ -239,10 +242,21 @@ class ToolError(Exception):
         *,
         correction: str | None = None,
         error_class: ErrorClass | str = ErrorClass.PROGRAMMATIC,
+        detail_trusted: bool = True,
     ) -> None:
+        """
+        Args:
+            message: what went wrong.
+            correction: the rule that would have been right, e.g. ``"Pass dates as YYYY-MM-DD."``
+            error_class: how to weigh the failure (default ``programmatic``).
+            detail_trusted: pass ``False`` when ``message`` or ``correction`` include text from
+                outside your system, such as a remote server's response. The failure still
+                counts, but its text never reaches the rewriter.
+        """
         super().__init__(message)
         self.correction = correction
         self.relock_error_class = ErrorClass(error_class)
+        self.detail_trusted = detail_trusted
 
 
 class TransientToolError(ToolError):
@@ -266,6 +280,34 @@ _PROGRAMMATIC_NAME_HINTS = (
     "valueerror", "keyerror", "parse", "decode", "missing", "unsupported", "forbidden",
     "unauthorized", "permission", "conflict",
 )
+
+
+# Error *messages* (from the HTTP API, ``tool_result(error="...")``) carry no type, so only clear
+# transient wording is recognised; everything else stays unknown (half weight).
+_TRANSIENT_MESSAGE = re.compile(
+    r"\btime[ds]?[ -]?out\b|\btimed out\b|\brate[ -]?limit|\btoo many requests\b|\bthrottl"
+    r"|\b(?:temporarily|service) unavailable\b|\bconnection (?:reset|refused|aborted|closed)\b"
+    r"|\b(?:http|status)(?: code)?[ :=]*(?:408|425|429|5\d\d)\b",
+    re.IGNORECASE)
+
+
+def classify_message(message: str) -> ErrorClass:
+    """Classify a failure known only by its message: transient wording, else unknown."""
+    return ErrorClass.TRANSIENT if _TRANSIENT_MESSAGE.search(message) else ErrorClass.UNKNOWN
+
+
+_CONTROL_FLOW = ("GraphBubbleUp",)  # LangGraph's interrupt() and Command(goto=...) unwind through tools
+
+
+def is_control_flow(exc: BaseException) -> bool:
+    """An exception that unwinds the agent rather than reporting a tool failure.
+
+    ``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError`` and LangGraph's interrupts
+    say nothing about whether the procedure was right, so they are never recorded.
+    """
+    if not isinstance(exc, Exception):
+        return True
+    return any(c.__name__ in _CONTROL_FLOW for c in type(exc).__mro__)
 
 
 def _status_code(exc: BaseException) -> int | None:

@@ -24,9 +24,11 @@ import json
 import logging
 import re
 import signal as _signal
+import sys
 import threading
 import time
 from collections.abc import Callable
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -43,8 +45,10 @@ from ..types import (
     NotLabileError,
     Observation,
     RelockError,
+    StoreError,
     Verdict,
 )
+from .toolkit import _message
 
 log = logging.getLogger("relock.http")
 
@@ -204,7 +208,26 @@ class Service:
 
     def observe(self, eid: str, body: dict[str, Any]) -> dict[str, Any]:
         exp_id, signal = _str(body, "expectation_id"), signal_from(body)
-        return obs_json(self.with_episode(eid, lambda ep: ep.observe(exp_id, signal=signal)))
+
+        def run(ep: Episode) -> Observation:
+            try:
+                return ep.observe(exp_id, signal=signal)
+            except (NotFoundError, NotLabileError, EpisodeClosedError, ConflictError, StoreError):
+                raise  # mapped by the handler (a conflict or store error may follow the resolve)
+            except RelockError:
+                # The episode reports a second observation as a RelockError; the stored row
+                # tells it apart from other failures without relying on the message.
+                if self._resolved_in(ep, exp_id):
+                    raise ApiError(409, f"expectation {exp_id} was already observed", "already_observed") from None
+                raise
+        return obs_json(self.with_episode(eid, run))
+
+    def _resolved_in(self, ep: Episode, exp_id: str) -> bool:
+        try:
+            row = self.memory.store.get_expectation(exp_id)
+        except RelockError:
+            return False
+        return row.get("episode_id") == ep.id and row.get("matched") is not None
 
     def tool_result(self, eid: str, body: dict[str, Any]) -> dict[str, Any]:
         tool, signal = _str(body, "tool"), signal_from(body)
@@ -249,8 +272,16 @@ def obs_json(obs: Observation) -> dict[str, Any]:
     return {"expectation_id": obs.expectation_id, "matched": obs.matched, **obs.decision.to_dict()}
 
 
+_SOURCES = ("tool", "verifier", "agent", "environment")
+
+
 def signal_from(body: dict[str, Any]) -> Signal:
-    """Build a trusted-harness signal from ``{"ok": bool, "error": {...}, "source": ...}``."""
+    """Build a trusted-harness signal from ``{"ok": bool, "error": {...}, "source": ...}``.
+
+    A failure's ``error`` fields mean the same for every source: ``transient`` and a 408, 425,
+    429 or 5xx ``status`` make it transient (never evidence), ``class`` sets its error class,
+    and ``detail_trusted: false`` keeps its message and correction away from the rewriter.
+    """
     ok = body.get("ok")
     if not isinstance(ok, bool):
         raise ApiError(400, "'ok' must be true or false")
@@ -258,6 +289,13 @@ def signal_from(body: dict[str, Any]) -> Signal:
     if not isinstance(source, str):
         raise ApiError(400, "'source' must be a string")
     source = source.lower()
+    if source not in _SOURCES:
+        raise ApiError(400, f"unknown source {source!r}; use tool, verifier, agent or environment "
+                            "(user corrections go to /correct)")
+    name = _opt_str(body, "verifier")
+    if name is not None and source != "verifier":
+        raise ApiError(400, f"'verifier' names the verifier of a source=verifier outcome; "
+                            f"it does not apply to source={source}")
     err = body.get("error") or {}
     if isinstance(err, str):
         err = {"message": err}
@@ -271,29 +309,39 @@ def signal_from(body: dict[str, Any]) -> Signal:
         raise ApiError(400, "'error.status' must be an integer HTTP status (100-599)")
     transient = _opt_bool(err, "transient", False, "error.transient")
     detail_trusted = _opt_bool(err, "detail_trusted", True, "error.detail_trusted")
-    if source == "tool":
-        if ok:
+    if ok:
+        if source == "tool":
             return Signal.ok()
-        if transient or status in _TRANSIENT_STATUS:
+        if source == "verifier":
+            return Signal.verifier(True, message, correction=correction, name=name)
+        if source == "agent":
+            return Signal.agent_report(True, message, correction=correction)
+        return Signal.observation(message, passed=True, correction=correction)
+
+    cls = _opt_str(err, "class", "error.class")
+    try:
+        error_class = ErrorClass(cls) if cls else None
+    except ValueError:
+        raise ApiError(400, f"unknown error class {cls!r}; use one of "
+                            f"{[c.value for c in ErrorClass]}") from None
+    if error_class is None and status in _PROGRAMMATIC_STATUS:
+        error_class = ErrorClass.PROGRAMMATIC
+    transient = transient or status in _TRANSIENT_STATUS
+    if source == "tool":
+        if transient:
             return Signal.transient(message or "transient failure", status=status)
-        cls = _opt_str(err, "class", "error.class")
-        if cls is None and status in _PROGRAMMATIC_STATUS:
-            cls = ErrorClass.PROGRAMMATIC
-        try:
-            error_class = ErrorClass(cls) if cls else None
-        except ValueError:
-            raise ApiError(400, f"unknown error class {cls!r}; use one of "
-                                f"{[c.value for c in ErrorClass]}") from None
         return Signal.tool_error(message or "tool failed", error_class=error_class, correction=correction,
                                  detail_trusted=detail_trusted, status=status)
+    if transient:  # never evidence, so a correction has nothing to apply to (as for source=tool)
+        error_class, correction = ErrorClass.TRANSIENT, None
     if source == "verifier":
-        return Signal.verifier(ok, message, correction=correction, name=_opt_str(body, "verifier"))
-    if source == "agent":
-        return Signal.agent_report(ok, message, correction=correction)
-    if source == "environment":
-        return Signal.observation(message, passed=ok, correction=correction)
-    raise ApiError(400, f"unknown source {source!r}; use tool, verifier, agent or environment "
-                        "(user corrections go to /correct)")
+        sig = Signal.verifier(False, message, correction=correction, name=name)  # semantic by default
+    elif source == "agent":
+        sig = Signal.agent_report(False, message, correction=correction)  # unknown by default
+    else:
+        sig = Signal.observation(message, passed=False, correction=correction)
+    data = {**sig.data, "status": status} if status is not None else sig.data
+    return sig.with_(error_class=error_class or sig.error_class, detail_trusted=detail_trusted, data=data)
 
 
 def _str(body: dict[str, Any], name: str) -> str:
@@ -399,6 +447,16 @@ def _version(q: dict[str, list[str]]) -> int | None:
 PUBLIC = {"/v1/health", "/v1/openapi.json"}
 
 
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``object_pairs_hook``: a repeated key is refused, never resolved to its last value."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ApiError(400, f"duplicate key {key!r} in the JSON body", "bad_json")
+        out[key] = value
+    return out
+
+
 def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler]:
     routes = _routes(svc)
 
@@ -410,27 +468,48 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
         def log_message(self, fmt: str, *args: Any) -> None:  # route access logs to logging
             log.debug("%s - %s", self.address_string(), fmt % args)
 
-        def _send(self, status: int, payload: Any) -> None:
+        def _send(self, status: int, payload: Any, headers: dict[str, str] | None = None) -> None:
             data = json.dumps(payload, default=str).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(data)
+            if self.command != "HEAD":  # a body after a HEAD response would desync keep-alive
+                self.wfile.write(data)
 
-        def _error(self, status: int, code: str, message: str) -> None:
-            self._send(status, {"error": {"code": code, "message": message}})
+        def _error(self, status: int, code: str, message: str, headers: dict[str, str] | None = None) -> None:
+            self._send(status, {"error": {"code": code, "message": message}}, headers)
 
         def _fail(self, status: int, code: str, message: str) -> None:
             """Answer and drop the connection: the request's framing can't be trusted."""
             self.close_connection = True
             self._error(status, code, message)
 
+        def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
+            """Protocol errors the base class answers itself (bad request line, oversized
+            headers, unknown method) are JSON too, and end the connection."""
+            self.close_connection = True
+            try:
+                phrase = HTTPStatus(code).phrase
+            except ValueError:
+                phrase = "error"
+            self._error(code, "not_implemented" if code == 501 else "bad_request", message or phrase)
+
         def _read_body(self) -> bytes | None:
             """The request body, or None after answering an error. Never reads past MAX_BODY."""
-            te = self.headers.get("Transfer-Encoding")
-            cl = self.headers.get("Content-Length")
+            te_all = self.headers.get_all("Transfer-Encoding") or []
+            cl_all = self.headers.get_all("Content-Length") or []
+            if len(cl_all) > 1 or len(te_all) > 1:  # which one counts is how requests get smuggled
+                self._fail(400, "bad_request",
+                           f"more than one {'Content-Length' if len(cl_all) > 1 else 'Transfer-Encoding'} header")
+                return None
+            te = te_all[0] if te_all else None
+            cl = cl_all[0] if cl_all else None
             if te is not None:
                 if cl is not None:
                     self._fail(400, "bad_request", "both Transfer-Encoding and Content-Length")
@@ -441,7 +520,8 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
                 return self._read_chunked()
             if cl is None or not cl.strip():
                 return b""
-            if not cl.strip().isdigit():
+            cl = cl.strip()
+            if not (cl.isascii() and cl.isdigit()):  # isdigit() alone accepts "²" and other digits
                 self._fail(400, "bad_request", "invalid Content-Length")
                 return None
             length = int(cl)
@@ -499,7 +579,7 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
                     allowed.append(meth)
                     continue
                 try:
-                    body = json.loads(raw) if raw.strip() else {}
+                    body = json.loads(raw, object_pairs_hook=_unique_keys) if raw.strip() else {}
                     if not isinstance(body, dict):
                         raise ApiError(400, "request body must be a JSON object")
                     out = fn(m.groupdict(), body, parse_qs(path.query))
@@ -508,20 +588,25 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
                 except RecursionError:
                     return self._error(400, "bad_json", "JSON nested too deeply")
                 except ApiError as e:
-                    return self._error(e.status, e.code, str(e))
+                    return self._error(e.status, e.code, _message(e))
                 except NotFoundError as e:
-                    return self._error(404, "not_found", str(e).strip("'\""))
+                    return self._error(404, "not_found", _message(e))
                 except (NotLabileError, EpisodeClosedError, ConflictError) as e:
-                    return self._error(409, type(e).__name__, str(e))
+                    return self._error(409, type(e).__name__, _message(e))
+                except StoreError as e:  # the detail names the database: log it, don't send it
+                    log.warning("database error on %s %s: %s", method, path.path, e)
+                    return self._error(503, "unavailable", "the database is unavailable; try again later")
                 except (RelockError, ValueError, TypeError) as e:
-                    return self._error(400, "bad_request", str(e))
+                    return self._error(400, "bad_request", _message(e))
                 except Exception:
                     log.exception("unhandled error on %s %s", method, path.path)
                     return self._error(500, "internal", "internal server error")
                 status, payload = out if isinstance(out, tuple) else (200, out)
                 return self._send(status, payload)
             if allowed:
-                return self._error(405, "method_not_allowed", f"use {' or '.join(sorted(set(allowed)))}")
+                methods = sorted(set(allowed))
+                return self._error(405, "method_not_allowed", f"use {' or '.join(methods)}",
+                                   {"Allow": ", ".join(methods)})
             return self._error(404, "no_route", f"no route for {method} {path.path}")
 
         def do_GET(self) -> None:
@@ -529,6 +614,23 @@ def make_handler(svc: Service, token: str | None) -> type[BaseHTTPRequestHandler
 
         def do_POST(self) -> None:
             self._dispatch("POST")
+
+        # No route takes these; they get a JSON 405 (with Allow) or 404, not the base class's
+        # HTML 501 page. Going through _dispatch also drains any body they carry.
+        def do_HEAD(self) -> None:
+            self._dispatch("HEAD")
+
+        def do_OPTIONS(self) -> None:
+            self._dispatch("OPTIONS")
+
+        def do_PUT(self) -> None:
+            self._dispatch("PUT")
+
+        def do_DELETE(self) -> None:
+            self._dispatch("DELETE")
+
+        def do_PATCH(self) -> None:
+            self._dispatch("PATCH")
 
     return Handler
 
@@ -556,6 +658,14 @@ class _Server(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self._slots.release()
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Log through ``logging`` instead of printing socketserver's traceback to stderr."""
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionError, TimeoutError)):  # reset, broken pipe, aborted (WinError 10053)
+            log.debug("client %s disconnected: %r", client_address, exc)
+        else:
+            log.exception("error serving %s", client_address)
 
 
 def _is_loopback(host: str) -> bool:
@@ -635,7 +745,7 @@ def openapi() -> dict[str, Any]:
                        "description": "Who observed the outcome. tool and verifier are trusted; agent and "
                                       "environment are logged but never rewrite memory (by default)."},
             "error": {"oneOf": [S, ref("ErrorDetail")]},
-            "verifier": {**S, "description": "Verifier name, for source=verifier."},
+            "verifier": {**S, "description": "Verifier name. Only with source=verifier; a 400 otherwise."},
         },
     }
     return {
@@ -666,6 +776,9 @@ def openapi() -> dict[str, Any]:
                     "confirmations": {"type": "integer"}, "failures": {"type": "integer"},
                     "change_kind": S, "reason": {"type": ["string", "null"]}, "author": {"type": ["string", "null"]},
                     "created_at": S, "archived": {"type": "boolean"}}},
+                "Hit": {"allOf": [ref("Item"), {"type": "object", "properties": {
+                    "score": {"type": "number", "description": "Retrieval score; higher is more relevant."},
+                    "rank": {"type": "integer", "minimum": 0, "description": "Position in this recall, from 0."}}}]},
                 "ErrorDetail": {"type": "object", "properties": {
                     "message": S,
                     "correction": {**S, "description": "The rule that would have been right, e.g. "
@@ -674,17 +787,29 @@ def openapi() -> dict[str, Any]:
                                "description": "HTTP status of the failed call, if any. "
                                               "408/425/429/5xx count as transient."},
                     "transient": {"type": "boolean", "description": "Timeouts, rate limits: never rewrite."},
-                    "class": {"type": "string", "enum": [c.value for c in ErrorClass]},
+                    "class": {"type": "string", "enum": [c.value for c in ErrorClass],
+                              "description": "Default: programmatic for a 4xx status, else unknown "
+                                             "(semantic for source=verifier)."},
                     "detail_trusted": {"type": "boolean", "default": True,
                                        "description": "false if message/correction echo remote content; "
                                                       "the failure still counts but its text never reaches "
-                                                      "the rewriter."}}},
+                                                      "the rewriter."}},
+                    "description": "How a failure is weighed. The fields mean the same for every source."},
                 "Outcome": outcome,
                 "Decision": {"type": "object", "properties": {
                     "expectation_id": S, "matched": {"type": "boolean"}, "reason": S,
                     "verdict": {"type": "string", "enum": [v.value for v in Verdict]},
                     "item_id": S, "version": {"type": "integer"}, "new_version": {"type": ["integer", "null"]},
                     "evidence": {"type": "number"}, "required": {"type": "number"}, "delta": {}}},
+                "EpisodeSummary": {"type": "object", "properties": {
+                    "episode_id": S,
+                    "recalled": {**strs, "description": "Refs of the items recalled or used in the episode."},
+                    "expectations": {"type": "integer", "description": "Expectations recorded in the episode."},
+                    "rewrites": {"type": "object", "additionalProperties": {"type": "integer"},
+                                 "description": "Rewrites made in the episode, by item id."},
+                    "close_decisions": {"type": "array", "items": ref("Decision"),
+                                        "description": "Decisions taken at close (with rewrite_on=close); "
+                                                       "these carry no expectation_id or matched."}}},
             },
         },
         "security": [{"bearer": []}],
@@ -707,7 +832,9 @@ def openapi() -> dict[str, Any]:
                     "type": "object", "required": ["title", "clauses"], "properties": {
                         "title": S, "clauses": strs, "key": S, "kind": S, "tags": strs,
                         "tools": {**strs, "description": "Tools this item governs; their outcomes resolve it."},
-                        "meta": {"type": "object"}, "exist_ok": {"type": "boolean", "default": False}}}),
+                        "meta": {"type": "object"}, "exist_ok": {"type": "boolean", "default": False},
+                        "author": {**S, "default": "api",
+                                   "description": "Recorded as the version's author, for audit."}}}),
                     "responses": ok(ref("Item"), "201", "Created")},
             },
             "/v1/items/{ref}": {"get": {"summary": "Get the active (or a given) version", "parameters": [
@@ -725,7 +852,7 @@ def openapi() -> dict[str, Any]:
                     "budget_tokens": {"type": "integer", "minimum": 1}}}),
                 "responses": ok({"type": "object", "properties": {
                     "context": {**S, "description": "Prompt block to give the model."},
-                    "items": {"type": "array", "items": ref("Item")}}})}},
+                    "items": {"type": "array", "items": ref("Hit")}}})}},
             "/v1/episodes/{episode_id}/use": {"post": {
                 "summary": "Load an item by key (also makes it editable)", "parameters": eid,
                 "requestBody": body({"type": "object", "required": ["item"], "properties": {"item": S}}),
@@ -759,7 +886,7 @@ def openapi() -> dict[str, Any]:
                 "responses": ok(ref("Decision"))}},
             "/v1/episodes/{episode_id}/close": {"post": {
                 "summary": "Re-lock: the episode's items are no longer editable", "parameters": eid,
-                "responses": ok({"type": "object"})}},
+                "responses": ok(ref("EpisodeSummary"))}},
         },
     }
 

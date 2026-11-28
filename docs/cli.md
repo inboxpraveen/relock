@@ -7,11 +7,16 @@ agent, so you can see what memory holds, why it changed, and undo a change.
 relock [--db DB] [--log-level LEVEL] <command> ...
 ```
 
-- **`--db`** is a SQLite path or a `postgresql://` URL. Without it, `$RELOCK_DB`, then
-  `./relock.db`. Put it before the command: `relock --db agent.db ls`.
+- **`--db`** is a SQLite path, a `sqlite:///` or `file:` URI, or a `postgresql://` URL. Without
+  it, `$RELOCK_DB`, then `./relock.db`. It goes before or after the command:
+  `relock --db agent.db ls` or `relock ls --db agent.db`. Any other `scheme://` is an error rather
+  than a file name.
 - **`--log-level`** (`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `$RELOCK_LOG_LEVEL`) logs relock
-  events to stderr. `relock serve` logs at INFO when it is unset.
+  events to stderr. `relock serve` logs at INFO when it is unset. Like `--db`, it goes before or
+  after the command.
 - `relock --version` prints the version, and `relock <command> --help` shows every option.
+- A usage error exits with status 2. A command that fails exits with 1 and prints `error: ...`
+  to stderr.
 
 ## Read memory
 
@@ -20,7 +25,7 @@ relock ls [--all] [--json]                   # active items, with confidence and
 relock show orders.fetch [--version 1] [--json]
 relock history orders.fetch [--json]         # every version, as clause diffs
 relock pending orders.fetch                  # pending evidence vs. the rewrite threshold, and what was blocked
-relock events [--item REF] [--episode ID] [--type TYPE] [--limit 50] [--json]
+relock events [--item REF] [--episode ID] [--type TYPE] [--limit 50] [--json]   # --limit >= 1
 relock stats                                 # row counts, to watch growth
 ```
 
@@ -55,6 +60,8 @@ relock archive orders.fetch [--undo]          # hide from retrieval, or bring ba
 ```
 
 - `add` takes one argument per clause after the title.
+- `edit` keeps several `--add` clauses in the order given, also with `--after`. Each clause takes
+  one operation per command.
 - `edit` and `rollback` bypass the evidence gates, since a person is making the change. Both
   still create a new version, so history is never lost. `--actor` records who did it (default:
   your user name).
@@ -66,21 +73,27 @@ relock archive orders.fetch [--undo]          # hide from retrieval, or bring ba
 relock init                                  # create or upgrade the tables, e.g. before a rollout
 relock prune --older-than 30d --dry-run      # count the old audit detail that would be deleted
 relock prune --older-than 30d                # delete it; items and versions are always kept
+relock prune --older-than 30d --keep-events blocked   # also keep blocked-signal events (repeatable)
 relock export traces.jsonl                   # rewrite traces as SFT and preference pairs
 ```
 
-`--older-than` takes a number with a unit, `s`, `m`, `h`, `d` or `w`, such as `12h`, `30d` or `2w`. It must be longer than any
-episode stays open in any process. See [retention](production.md#growth-and-retention).
+`--older-than` takes a number with a unit, `s`, `m`, `h`, `d` or `w`, such as `12h`, `30d` or
+`2w`, up to 100 years. It must be longer than any episode stays open in any process, because prune
+can't see episodes that other processes hold open. Ages under one hour therefore need `--force`;
+`--dry-run` never does. Content changes (create, rewrite, edits, rollbacks, archiving) are always
+kept. See [retention](production.md#growth-and-retention).
 
 ## Servers and benchmarks
 
 ```
 relock serve [--host 127.0.0.1] [--port 8765] [--idle-timeout 1800] [-k 3]
-relock mcp --verifier tests="pytest -q" [--cwd DIR] [--allow-teach] [--trust-agent-reports]
+relock mcp --verifier tests="pytest -q" [--cwd DIR] [--allow-teach] [--trust-agent-reports] [--untrusted-verifier-output]
 relock bench [--mode structural|behavioral|both] [--out DIR]
 ```
 
-- `serve` runs the [HTTP API](http.md). Set `RELOCK_TOKEN` to require a bearer token.
+- `serve` runs the [HTTP API](http.md). Set `RELOCK_TOKEN` to require a bearer token. `--port`
+  defaults to `$RELOCK_PORT` when that is a port number, else 8765. (Kubernetes sets
+  `RELOCK_PORT` to a URL for a Service named `relock`; that is ignored with a warning.)
 - `mcp` runs the [MCP server](mcp.md).
 - `bench` runs [RelapseBench](benchmarks.md).
 

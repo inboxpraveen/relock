@@ -49,7 +49,7 @@ relock --db relock.db add "Run the tests" "Run the tests with pytest -q." --key 
 | `relock_recall(query)` | Returns matching procedures with item and clause ids. Recalled items become editable. |
 | `relock_expect(item, prediction, clause_ids?, tool?)` | States what the agent expects before it relies on a procedure. Returns an expectation id. |
 | `relock_verify(expectation_id, verifier)` | The server runs a configured verifier and resolves the expectation from its exit code. This is the trusted path. |
-| `relock_report(expectation_id, outcome, ...)` | The agent's own account of what happened. Logged; never rewrites memory by default. |
+| `relock_report(expectation_id, outcome, ...)` | The agent's own account of what happened, with `outcome` `confirmed` or `failed`. Logged; never rewrites memory by default. |
 | `relock_history(item)` | Every version of an item and what changed. |
 | `relock_end()` | Finishes the task and re-locks. |
 | `relock_teach(title, clauses, ...)` | Saves a new procedure. Only with `--allow-teach`. |
@@ -72,7 +72,14 @@ The agent can only pick a verifier by name. The server runs the command and read
 itself, so two red verifier runs are enough evidence for a rewrite. The agent's own words never
 reach the rewriter. The verifier's output does, so that an [LLM rewriter](configuration.md#rewriters)
 can work out the fix from a failing check. That output can include text the agent influenced,
-such as messages in tests it wrote, so review rewrites made this way (`relock history`).
+such as messages in tests it wrote, so review rewrites made this way (`relock history`). Where the
+agent can edit what a verifier prints, start the server with `--untrusted-verifier-output`: a red
+run still counts as evidence, but its output never reaches the rewriter, which then knows only
+that the check failed.
+
+A verifier that times out, or can't start at all (a missing program), is never evidence. The
+server warns at startup when a verifier's program isn't found, and a timeout stops everything the
+verifier started.
 
 Items the agent teaches with `--allow-teach` are marked `meta.origin = "agent"` and author `agent`,
 so you can review or archive them.
@@ -89,16 +96,18 @@ text. Don't use it where the agent reads untrusted content.
 | `--cwd DIR` | server's working directory | Where verifier commands run. |
 | `--allow-teach` | off | Expose `relock_teach`. |
 | `--trust-agent-reports` | off | Let the agent's reports, predictions and corrections count. |
+| `--untrusted-verifier-output` | off | Keep verifier output from the rewriter; pass/fail still counts. |
 | `--idle-timeout S` | 1800 | Re-lock an episode after this many idle seconds; 0 disables. |
 | `-k N` | 3 | Items per recall. |
 | `--llm-base-url`, `--llm-model`, `--llm-api-key` | hint rewriter | An OpenAI-compatible model to write rewrites. Also read from `RELOCK_LLM_*`. |
-| `--transport` | `stdio` | `stdio`, `sse` or `streamable-http`. The server holds one episode at a time, so serve a single client from each server. |
+| `--transport` | `stdio` | `stdio`, `sse` or `streamable-http`. The server holds one episode at a time, so serve a single client from each server; it warns on the network transports. |
 
-The database is the global `--db` option, or `$RELOCK_DB`, or `./relock.db`. CI tests the server
-on both the `mcp` 1.x and 2.x lines.
+The database is `--db` (before or after `mcp`), or `$RELOCK_DB`, or `./relock.db`. CI tests the
+server on both the `mcp` 1.x and 2.x lines.
 
 ## From Python
 
 `build_server(memory, verifiers={...})` in `relock_memory.integrations.mcp` returns the server
 object, if you want to embed it or share a `Memory` with other code. `trust_agent_reports=True`
-there widens trust for the server's own episodes only.
+there widens trust for the server's own episodes only, and `trust_verifier_output=False` is the
+`--untrusted-verifier-output` switch.

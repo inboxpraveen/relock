@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -59,8 +60,45 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def clean_text(text: str) -> str:
+    """Text every database stores: NUL and lone surrogates (from bytes decoded with
+    ``surrogateescape``, say) become U+FFFD."""
+    if "\x00" in text:
+        text = text.replace("\x00", "�")
+    if not text.isascii():
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            text = "".join("�" if 0xD800 <= ord(c) <= 0xDFFF else c for c in text)
+    return text
+
+
+def _json_key(key: Any) -> str:
+    if isinstance(key, str):
+        return clean_text(key)
+    if key is None or isinstance(key, (bool, int, float)):
+        return json.dumps(key)  # what json itself would write: 1 -> "1", True -> "true"
+    return clean_text(str(key))
+
+
+def _json_safe(value: Any, depth: int = 0) -> Any:
+    """``value`` with what JSON columns reject replaced: NaN and infinity become null, text is
+    cleaned, and keys become strings (so mixed key types still sort)."""
+    if isinstance(value, str):
+        return clean_text(value)
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    if depth > 64:  # deeper than any ledger payload; also stops a self-referencing structure
+        return short_repr(value, 200)
+    if isinstance(value, dict):
+        return {_json_key(k): _json_safe(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v, depth + 1) for v in value]
+    return value
+
+
 def dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=_json_default)
+    return json.dumps(_json_safe(value), ensure_ascii=False, sort_keys=True, default=_json_default)
 
 
 def loads(value: Any) -> Any:
@@ -76,14 +114,17 @@ def loads(value: Any) -> Any:
 
 def _json_default(o: Any) -> Any:
     if hasattr(o, "to_dict"):
-        return o.to_dict()
+        return _json_safe(o.to_dict())
     if isinstance(o, (set, frozenset)):
-        return sorted(o)
+        try:
+            return _json_safe(sorted(o))
+        except TypeError:  # mixed element types
+            return _json_safe(sorted(o, key=repr))
     if isinstance(o, datetime):
         return o.isoformat()
     if isinstance(o, BaseException):
-        return {"type": type(o).__name__, "message": str(o)}
-    return repr(o)
+        return _json_safe({"type": type(o).__name__, "message": str(o)})
+    return clean_text(repr(o))
 
 
 def ts(value: Any) -> str | None:
@@ -97,7 +138,7 @@ def ts(value: Any) -> str | None:
     return str(value)
 
 
-_TOKEN = re.compile(r"[a-z0-9]+")
+_TOKEN = re.compile(r"[^\W_]+")  # letters and digits in any script; "_" splits, as in get_orders
 
 STOPWORDS = frozenset(
     """a an and are as at be by for from has have how i in is it its of on or
@@ -116,6 +157,7 @@ def approx_tokens(text: str) -> int:
 
 
 _AGE_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+MAX_AGE = timedelta(days=36525)  # 100 years; "now - age" stays a valid date
 
 
 def parse_age(value: Any) -> timedelta:
@@ -131,9 +173,15 @@ def parse_age(value: Any) -> timedelta:
             raise ValueError(f"invalid age {value!r}: use a number with s, m, h, d or w, e.g. '30d'") from None
         if not unit:
             raise ValueError(f"invalid age {value!r}: give a unit (s, m, h, d or w), e.g. '30d'")
+        if not math.isfinite(number):
+            raise ValueError(f"invalid age {value!r}: not a finite number")
+        if abs(number * _AGE_UNITS[unit]) > MAX_AGE.total_seconds():
+            raise ValueError(f"invalid age {value!r}: at most 100 years (36525d)")
         age = timedelta(seconds=number * _AGE_UNITS[unit])
     if age < timedelta(0):
         raise ValueError("age must not be negative")
+    if age > MAX_AGE:
+        raise ValueError(f"invalid age {value!r}: at most 100 years (36525d)")
     return age
 
 

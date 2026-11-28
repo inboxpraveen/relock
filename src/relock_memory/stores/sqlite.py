@@ -7,6 +7,7 @@ import sqlite3
 import time
 from typing import Any
 
+from ..types import StoreError
 from .sql import SQLStore
 
 
@@ -16,13 +17,24 @@ class SQLiteStore(SQLStore):
     driver_errors = (sqlite3.Error,)
     integrity_errors = (sqlite3.IntegrityError,)
 
-    def __init__(self, path: str = "relock.db", *, timeout: float = 30.0) -> None:
+    def __init__(self, path: str | os.PathLike[str] = "relock.db", *, timeout: float = 30.0,
+                 uri: bool | None = None) -> None:
+        """
+        Args:
+            path: a file path, ``":memory:"``, or a SQLite ``file:`` URI.
+            timeout: seconds to wait for another process's write lock.
+            uri: open ``path`` as a URI; by default, when it starts with ``file:``.
+        """
         super().__init__()
-        self.path = path
+        self.path = os.fsdecode(path) if isinstance(path, (os.PathLike, bytes)) else path
         self.timeout = timeout
-        if path not in ("", ":memory:"):
-            parent = os.path.dirname(os.path.abspath(path))
-            os.makedirs(parent, exist_ok=True)
+        self.uri = self.path.startswith("file:") if uri is None else uri
+        if not self.uri and self.path not in ("", ":memory:"):
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+            except OSError as e:  # a file where a directory should be, no permission...
+                raise StoreError(f"{self!r}: cannot create the database's directory: "
+                                 f"{type(e).__name__}: {e}") from e
         self.init()
 
     def __repr__(self) -> str:
@@ -30,7 +42,7 @@ class SQLiteStore(SQLStore):
 
     def _connect(self) -> Any:
         conn = sqlite3.connect(self.path or ":memory:", timeout=self.timeout, check_same_thread=False,
-                               isolation_level=None)
+                               isolation_level=None, uri=self.uri)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             if self.path not in ("", ":memory:"):

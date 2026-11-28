@@ -16,8 +16,9 @@ LlamaIndex, AutoGen, raw OpenAI / Anthropic / vLLM tool calling.
 from __future__ import annotations
 
 import json
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..episode import Episode
@@ -25,6 +26,43 @@ from ..memory import Memory
 from ..policy import WritePolicy
 from ..signals import ErrorClass, Signal
 from ..types import RelockError
+
+# The words report_outcome accepts. Others are refused rather than guessed: reading "held" or
+# "yes" as a failure (as relock < 0.3.1 did) records a false report.
+_OUTCOMES = {**dict.fromkeys(("confirmed", "success", "succeeded", "passed", "ok", "true"), True),
+             **dict.fromkeys(("failed", "fail", "failure", "error", "false"), False)}
+
+
+class _BadArgument(ValueError):
+    """A model-supplied argument of the wrong type: answered with an ``error:`` string."""
+
+
+def _message(e: BaseException) -> str:
+    """An exception's message. ``str()`` of a KeyError (so of NotFoundError) adds repr quotes."""
+    return e.args[0] if e.args and isinstance(e.args[0], str) else str(e)
+
+
+def _text(name: str, value: Any, *, required: bool = False, default: str | None = None) -> str | None:
+    if value is None:
+        if required:
+            raise _BadArgument(f"'{name}' is required and must be a string")
+        return default
+    if not isinstance(value, str):
+        raise _BadArgument(f"'{name}' must be a string, not {type(value).__name__}")
+    return value
+
+
+def _texts(name: str, value: Any, *, required: bool = False) -> list[str] | None:
+    """A list of strings. A bare string is one element, never split into characters."""
+    if value is None:
+        if required:
+            raise _BadArgument(f"'{name}' is required and must be a list of strings")
+        return None
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+        return list(value)
+    raise _BadArgument(f"'{name}' must be a list of strings")
 
 
 class Toolkit:
@@ -55,6 +93,9 @@ class Toolkit:
         self.idle_timeout = idle_timeout
         self._own: Episode | None = None
         self._last_used = time.monotonic()
+        # Guards check-and-open of the toolkit's own episode: concurrent first calls (an MCP
+        # server's worker threads, parallel tool calls) must share one episode, not leak several.
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ episode plumbing
     def episode(self) -> Episode:
@@ -64,19 +105,20 @@ class Toolkit:
         one. The toolkit's episode is made active in the calling context, so your wrapped tools
         called next in the same thread or task are attributed to it.
         """
-        now = time.monotonic()
-        idle = now - self._last_used
-        self._last_used = now
-        if (self._own is not None and not self._own.closed and self.idle_timeout is not None
-                and idle > self.idle_timeout):
-            self._own.close()  # re-lock: whatever the client recalled before going quiet
-        ep = self.memory.current_episode()
-        if ep is not None and ep._owner in (None, self):  # yours, or this toolkit's
-            return ep
-        own = self._own if self._own is not None and not self._own.closed else self._open_own(
-            self.task or "toolkit session")
-        self.memory._ctx.set(own)
-        return own
+        with self._lock:
+            now = time.monotonic()
+            idle = now - self._last_used
+            self._last_used = now
+            if (self._own is not None and not self._own.closed and self.idle_timeout is not None
+                    and idle > self.idle_timeout):
+                self._own.close()  # re-lock: whatever the client recalled before going quiet
+            ep = self.memory.current_episode()
+            if ep is not None and ep._owner in (None, self):  # yours, or this toolkit's
+                return ep
+            own = self._own if self._own is not None and not self._own.closed else self._open_own(
+                self.task or "toolkit session")
+            self.memory._ctx.set(own)
+            return own
 
     def _open_own(self, task: str) -> Episode:
         own = self.memory.episode(task, policy=self.policy)
@@ -86,21 +128,23 @@ class Toolkit:
 
     def begin_episode(self, task: str = "") -> str:
         """Start a fresh memory episode for a new task. Returns the episode id."""
-        self.end_episode()
-        own = self._open_own(task or self.task or "toolkit session")
-        self.memory._ctx.set(own)
-        self._last_used = time.monotonic()
-        return own.id
+        with self._lock:
+            self.end_episode()
+            own = self._open_own(task or self.task or "toolkit session")
+            self.memory._ctx.set(own)
+            self._last_used = time.monotonic()
+            return own.id
 
     def end_episode(self) -> str:
         """Close the memory episode for the current task (re-lock). Returns a summary."""
-        if self._own is not None and not self._own.closed:
+        with self._lock:
+            if self._own is None or self._own.closed:
+                return "{}"
             own, self._own = self._own, None
             summary = own.close()
             if self.memory._ctx.get() is own:
                 self.memory._ctx.set(None)
             return json.dumps(summary)
-        return "{}"
 
     # ------------------------------------------------------------------ model-facing tools
     def recall_memory(self, query: str) -> str:
@@ -112,6 +156,10 @@ class Toolkit:
         Returns the matching procedures with their ids and clause ids. Follow them, and cite the
         item and clause ids when you call state_expectation.
         """
+        try:
+            query = _text("query", query, required=True)
+        except _BadArgument as e:
+            return f"error: {e}"
         recall = self.episode().recall(query, k=self.k)
         if not recall:
             return "No relevant procedures in memory."
@@ -130,10 +178,14 @@ class Toolkit:
         Returns an expectation id. The tool's real result is checked against it automatically.
         """
         try:
+            item = _text("item", item, required=True)
+            prediction = _text("prediction", prediction, required=True)
+            clause_ids = _texts("clause_ids", clause_ids)
+            tool = _text("tool", tool)
             exp = self.episode().expect(item, prediction, clauses=clause_ids or None, tool=tool or None,
                                         author="agent")
         except (RelockError, ValueError, KeyError) as e:
-            return f"error: {e}"
+            return f"error: {_message(e)}"
         return exp.id
 
     def report_outcome(self, expectation_id: str, outcome: str, details: str = "", correction: str = "",
@@ -150,16 +202,26 @@ class Toolkit:
         """
         if not self.allow_reports:
             return "error: outcome reports are disabled; outcomes are checked by the harness"
-        passed = outcome.strip().lower() in ("confirmed", "success", "succeeded", "passed", "ok", "true")
         try:
-            cls = ErrorClass(error_type.strip().lower()) if error_type else ErrorClass.UNKNOWN
+            expectation_id = _text("expectation_id", expectation_id, required=True)
+            outcome = _text("outcome", outcome, required=True)
+            details = _text("details", details, default="")
+            correction = _text("correction", correction, default="")
+            error_type = _text("error_type", error_type, default="unknown")
+        except _BadArgument as e:
+            return f"error: {e}"
+        word = outcome.strip().removesuffix(".").strip().lower()
+        if word not in _OUTCOMES:
+            return f"error: outcome must be 'confirmed' or 'failed', not {outcome!r}"
+        try:
+            cls = ErrorClass(error_type.strip().lower()) if error_type.strip() else ErrorClass.UNKNOWN
         except ValueError:
             cls = ErrorClass.UNKNOWN
-        signal = Signal.agent_report(passed, details, correction=correction or None, error_class=cls)
+        signal = Signal.agent_report(_OUTCOMES[word], details, correction=correction or None, error_class=cls)
         try:
             obs = self.episode().observe(expectation_id, signal=signal)
         except (RelockError, ValueError, KeyError) as e:
-            return f"error: {e}"
+            return f"error: {_message(e)}"
         return json.dumps({"matched": obs.matched, **obs.decision.to_dict()})
 
     def teach_memory(self, title: str, clauses: list[str], key: str | None = None,
@@ -175,10 +237,15 @@ class Toolkit:
         if not self.allow_teach:
             return "error: teaching is disabled"
         try:
-            item = self.memory.add(title, clauses, key=key or None, tools=tools or (),
+            title = _text("title", title, required=True)
+            # A bare string is handed to Memory.add whole, which reads one clause per line.
+            steps = clauses if isinstance(clauses, str) else _texts("clauses", clauses, required=True)
+            key = _text("key", key)
+            tools = _texts("tools", tools)
+            item = self.memory.add(title, steps, key=key or None, tools=tools or (),
                                    meta={"origin": "agent"}, author="agent")
         except (RelockError, ValueError) as e:
-            return f"error: {e}"
+            return f"error: {_message(e)}"
         return f"saved {item.ref} v{item.version}"
 
     # ------------------------------------------------------------------ exports
@@ -249,11 +316,23 @@ class Toolkit:
         return name in {s["name"] for s in self.schemas()}
 
     def call(self, name: str, arguments: dict[str, Any] | str | None = None) -> str:
-        """Dispatch a tool call from any provider. ``arguments`` may be a dict or a JSON string."""
-        args = json.loads(arguments) if isinstance(arguments, str) else dict(arguments or {})
+        """Dispatch a tool call from any provider. ``arguments`` may be a dict or a JSON string.
+
+        A model's mistakes (bad JSON, missing or mistyped arguments) come back as an
+        ``error: ...`` string the model can act on; they are never raised.
+        """
         fns = {f.__name__: f for f in self.functions()}
-        if name not in fns:
+        if not isinstance(name, str) or name not in fns:
             return f"error: unknown relock tool {name!r}"
+        if isinstance(arguments, str):
+            try:
+                args = json.loads(arguments) if arguments.strip() else {}
+            except (ValueError, RecursionError) as e:
+                return f"error: arguments for {name} are not valid JSON ({e}); send a JSON object"
+        else:
+            args = {} if arguments is None else arguments
+        if not isinstance(args, Mapping):
+            return f"error: arguments for {name} must be a JSON object, not {type(args).__name__}"
         try:
             return fns[name](**args)
         except TypeError as e:

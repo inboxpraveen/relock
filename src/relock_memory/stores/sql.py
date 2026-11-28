@@ -20,7 +20,7 @@ from collections.abc import Collection, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
-from .._util import dumps, loads, new_id, now, ts
+from .._util import clean_text, dumps, loads, new_id, now, ts
 from ..types import Clause, ConflictError, Item, NotFoundError, StoreError
 
 log = logging.getLogger("relock_memory")
@@ -171,6 +171,8 @@ class SQLStore:
     """
 
     placeholder = "?"
+    for_update = ""
+    """Suffix that locks selected rows until commit (SQLite write transactions are exclusive already)."""
     types: dict[str, str] = {"bool": "INTEGER", "false": "0", "ts": "TEXT", "json": "TEXT", "real": "REAL"}
     driver_errors: tuple[type[BaseException], ...] = ()
     """The driver's exceptions; they are re-raised as :class:`StoreError` (cause chained)."""
@@ -284,7 +286,9 @@ class SQLStore:
         return any(r[1] == column for r in cur.fetchall())
 
     def _exec(self, cur: Any, sql: str, params: Sequence[Any] = ()) -> Any:
-        cur.execute(self._sql(sql), tuple(params))
+        # Text that the database can't store (NUL, lone surrogates) is replaced, never fatal:
+        # it arrives in tool errors and user content.
+        cur.execute(self._sql(sql), tuple(clean_text(p) if isinstance(p, str) else p for p in params))
         return cur
 
     def _rows(self, cur: Any) -> list[dict[str, Any]]:
@@ -415,7 +419,9 @@ class SQLStore:
     def resolve(self, ref: str) -> str:
         """Map an id or key to an item id."""
         with self._tx(write=False) as cur:
-            self._exec(cur, "SELECT id FROM relock_items WHERE id = ? OR key = ?", (ref, ref))
+            # An id wins over a key that happens to equal it.
+            self._exec(cur, "SELECT id FROM relock_items WHERE id = ? OR key = ? "
+                            "ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1", (ref, ref, ref))
             row = cur.fetchone()
         if row is None:
             raise NotFoundError(f"no memory item {ref!r}")
@@ -474,9 +480,13 @@ class SQLStore:
             self._exec(cur, f"INSERT INTO relock_versions ({_VERSION_COLS}) VALUES ({', '.join('?' * 23)})",
                        self._version_params(new))
             if new.evidence:
-                marks = ", ".join("?" * len(new.evidence))
+                evidence = list(dict.fromkeys(new.evidence))
+                marks = ", ".join("?" * len(evidence))
                 self._exec(cur, f"UPDATE relock_errors SET status = 'consumed', resolved_ref = ? "
-                                f"WHERE id IN ({marks})", (f"v{new.version}", *new.evidence))
+                                f"WHERE status = 'pending' AND id IN ({marks})", (f"v{new.version}", *evidence))
+                if cur.rowcount != len(evidence):  # rolls the whole rewrite back
+                    raise ConflictError(f"{new.id}: its evidence changed while v{new.version} was being written "
+                                        "(another process cancelled or used it)")
             self._exec(cur, "UPDATE relock_errors SET status = 'stale', reason = ? "
                             "WHERE item_id = ? AND version = ? AND status = 'pending'",
                        (stale_reason, new.id, expected_current))
@@ -596,6 +606,13 @@ class SQLStore:
                        (e["id"], e["expectation_id"], e["episode_id"], e["item_id"], e["version"], e["source"],
                         e["error_class"], float(e["weight"]), bool(e.get("authoritative")), dumps(e["diff"]),
                         e["status"], e.get("reason"), now()))
+            if e["status"] == "pending":
+                # Evidence against a version that a rewrite (in any process) already superseded can
+                # never be used; storing it as pending would keep it, and its episode, forever.
+                self._exec(cur, "UPDATE relock_errors SET status = 'stale', reason = ? WHERE id = ? AND NOT EXISTS "
+                                "(SELECT 1 FROM relock_items i WHERE i.id = ? AND i.current_version = ?)",
+                           (f"v{e['version']} was superseded before this error was stored", e["id"], e["item_id"],
+                            e["version"]))
 
     def errors(self, item_id: str, version: int | None = None, status: str | None = None) -> list[dict[str, Any]]:
         where, params = ["item_id = ?"], [item_id]
@@ -627,13 +644,25 @@ class SQLStore:
             r["created_at"] = ts(r["created_at"])
         return rows
 
-    def set_error_status(self, ids: Sequence[str], status: str, reason: str | None = None) -> None:
+    def set_error_status(self, ids: Sequence[str], status: str, reason: str | None = None, *,
+                         only_from: str | None = None) -> list[str]:
+        """Set the status of these errors and return the ids that changed.
+
+        With ``only_from``, only errors currently in that status change, so an error that a
+        concurrent rewrite consumed (or another process cancelled) is left as it is.
+        """
         if not ids:
-            return
+            return []
         marks = ", ".join("?" * len(ids))
+        guard, params = ("", ()) if only_from is None else (" AND status = ?", (only_from,))
         with self._tx() as cur:
-            self._exec(cur, f"UPDATE relock_errors SET status = ?, reason = ? WHERE id IN ({marks})",
-                       (status, reason, *ids))
+            self._exec(cur, f"SELECT id FROM relock_errors WHERE id IN ({marks}){guard} ORDER BY id{self.for_update}",
+                       (*ids, *params))
+            changed = {r[0] for r in cur.fetchall()}
+            if changed:
+                self._exec(cur, f"UPDATE relock_errors SET status = ?, reason = ? WHERE id IN ({marks}){guard}",
+                           (status, reason, *ids, *params))
+        return [i for i in ids if i in changed]
 
     # ------------------------------------------------------------------ events
     def add_event(self, type_: str, *, episode_id: str | None = None, item_id: str | None = None,
@@ -780,6 +809,7 @@ class SQLStore:
         gone = f"SELECT e.id FROM relock_episodes e WHERE {ended} AND {self._UNREFERENCED}"
         kept = f"SELECT e.id FROM relock_episodes e WHERE {ended} AND NOT ({self._UNREFERENCED})"
         routine = [t for t in self._ROUTINE_EVENTS if t not in keep] or ["-"]
+        voided = f" OR x.episode_id IN ({', '.join('?' * len(abandoned))})" if abandoned else ""
         queries = {
             "episodes": (f"SELECT COUNT(*) FROM ({gone}) g", params),
             "errors": (f"SELECT COUNT(*) FROM relock_errors WHERE episode_id IN ({gone})", params),
@@ -787,9 +817,10 @@ class SQLStore:
             "retrievals": (f"SELECT COUNT(*) FROM relock_retrievals WHERE episode_id IN ({gone})", params),
             "events": (f"SELECT COUNT(*) FROM relock_events WHERE type NOT IN ({keep_in}) AND "
                        f"(episode_id IN ({gone}) OR (episode_id IS NULL AND at < ?))", (*keep, *params, cutoff)),
+            # An abandoned episode's open expectations are voided first, so they are trimmed too.
             "expectations_trimmed": (f"SELECT COUNT(*) FROM relock_expectations x WHERE x.episode_id IN ({kept}) "
-                                     "AND x.status <> 'open' AND NOT EXISTS (SELECT 1 FROM relock_errors r "
-                                     "WHERE r.expectation_id = x.id)", params),
+                                     f"AND (x.status <> 'open'{voided}) AND NOT EXISTS (SELECT 1 FROM "
+                                     "relock_errors r WHERE r.expectation_id = x.id)", (*params, *abandoned)),
             "events_trimmed": (f"SELECT COUNT(*) FROM relock_events WHERE type IN ({', '.join('?' * len(routine))}) "
                                f"AND episode_id IN ({kept})", (*routine, *params)),
         }

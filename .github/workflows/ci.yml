@@ -60,6 +60,7 @@ jobs:
       - run: python -m pip install -e ".[dev]" "mcp>=1.2,<2"
       - run: python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
       - run: pytest tests/test_integrations.py -k mcp
+      - run: pytest tests/test_integrations_hardening.py
 
   package:
     runs-on: ubuntu-latest

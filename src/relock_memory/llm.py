@@ -8,14 +8,19 @@ plugged in as a plain ``Callable[[str], str]``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from typing import Any
+from urllib.parse import urlsplit
 
 from .signals import ToolError, TransientToolError
+
+log = logging.getLogger("relock_memory")
 
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -24,19 +29,40 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 def strip_reasoning(text: str) -> str:
     """Remove ``<think>...</think>`` blocks emitted by reasoning models (Qwen3, DeepSeek-R1...)."""
     text = _THINK.sub("", text)
-    if "</think>" in text.lower():  # unterminated opening tag cut off by the server
-        text = text[text.lower().rindex("</think>") + len("</think>"):]
+    lower = text.lower()
+    if "</think>" in lower:  # the server cut off the opening tag: drop everything before the close
+        text = text[lower.rindex("</think>") + len("</think>"):]
+        lower = text.lower()
+    if "<think>" in lower:  # reasoning cut off before it closed (max_tokens): it holds no answer
+        text = text[: lower.index("<think>")]
     return text.strip()
 
 
-def extract_json(text: str) -> Any:
-    """Return the first JSON object or array found in ``text`` (tolerates fences and chatter)."""
-    text = strip_reasoning(text)
+def extract_json(text: str, *, prefer_key: str | None = None) -> Any:
+    """Return the first JSON object or array found in ``text`` (tolerates fences and chatter).
+
+    With ``prefer_key``, the first object that has that key wins over earlier JSON values (a
+    model may quote an example before its answer); without one, the first value is returned.
+    """
+    first: list[Any] = []
+    for value in _json_values(strip_reasoning(text)):
+        if prefer_key is None or (isinstance(value, dict) and prefer_key in value):
+            return value
+        if not first:
+            first.append(value)
+    if first:
+        return first[0]
+    raise ValueError("no JSON object found in model output")
+
+
+def _json_values(text: str) -> Iterator[Any]:
+    """Every JSON object or array in ``text``, fenced blocks first, in order of appearance."""
     candidates = [m.group(1) for m in _FENCE.finditer(text)] + [text]
     for cand in candidates:
         cand = cand.strip()
         try:
-            return json.loads(cand)
+            yield json.loads(cand)
+            continue
         except json.JSONDecodeError:
             pass
         for opener, closer in (("{", "}"), ("[", "]")):
@@ -61,11 +87,43 @@ def extract_json(text: str) -> Any:
                         depth -= 1
                         if depth == 0:
                             try:
-                                return json.loads(cand[start : i + 1])
+                                yield json.loads(cand[start : i + 1])
                             except json.JSONDecodeError:
-                                break
+                                pass
+                            break
                 start = cand.find(opener, start + 1)
-    raise ValueError("no JSON object found in model output")
+
+
+_OPENAI_HOSTS = frozenset({"api.openai.com"})
+_warned_openai_key = False
+
+
+def _openai_key_for(base_url: str) -> str | None:
+    """``$OPENAI_API_KEY``, but only for OpenAI's own API: it is never sent to another host."""
+    global _warned_openai_key
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return None
+    host = (urlsplit(base_url).hostname or "").lower()
+    if host in _OPENAI_HOSTS:
+        return key
+    if not _warned_openai_key:
+        _warned_openai_key = True
+        log.warning("relock: OPENAI_API_KEY is set but is not sent to %s (it is used only for api.openai.com). "
+                    "Set RELOCK_LLM_API_KEY or pass api_key= if that endpoint needs a key.", host or base_url)
+    return None
+
+
+def _reply_text(body: str) -> str:
+    """The assistant text of a chat-completions response, or a clear :class:`ToolError`."""
+    try:
+        payload = json.loads(body)
+        content = payload["choices"][0]["message"].get("content")
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise ToolError(f"LLM endpoint returned an unexpected response: {body[:300]!r}") from None
+    if isinstance(content, list):  # content parts: [{"type": "text", "text": "..."}]
+        content = "".join(p.get("text") or "" for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return content if isinstance(content, str) else ""
 
 
 class OpenAICompatible:
@@ -91,7 +149,7 @@ class OpenAICompatible:
     ) -> None:
         self.base_url = (base_url or os.environ.get("RELOCK_LLM_BASE_URL") or "http://localhost:8000/v1").rstrip("/")
         self.model = model or os.environ.get("RELOCK_LLM_MODEL") or "default"
-        self.api_key = api_key or os.environ.get("RELOCK_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key or os.environ.get("RELOCK_LLM_API_KEY") or _openai_key_for(self.base_url)
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
@@ -123,8 +181,8 @@ class OpenAICompatible:
             req = urllib.request.Request(f"{self.base_url}/chat/completions", data=data, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    payload = json.loads(resp.read().decode())
-                return payload["choices"][0]["message"].get("content") or ""
+                    body_text = resp.read().decode("utf-8", errors="replace")
+                return _reply_text(body_text)
             except urllib.error.HTTPError as e:
                 detail = e.read().decode(errors="replace")[:500]
                 if e.code in (408, 429, 500, 502, 503, 504) and attempt < self.retries:

@@ -13,7 +13,8 @@ replicas and monitoring. [Configuration](configuration.md) covers the settings t
 - Route `relock_memory` logs to your log pipeline, and alert on warnings.
 - Schedule `relock prune --older-than 30d`.
 - For the HTTP API: set `RELOCK_TOKEN`, terminate TLS in front of it, and pin each episode to one
-  replica. See [HTTP deployment](http.md#deployment).
+  replica. See [HTTP deployment](http.md#deployment). A `503` from it means the database is
+  unavailable; retry.
 
 ## Logs and audit
 
@@ -45,6 +46,9 @@ author and the ids of the errors that justified it.
   `relock.NotFoundError`. All of them derive from `relock.RelockError`.
 - A problem while recording a wrapped tool's outcome is logged, not raised, so your agent sees the
   tool's own result or exception.
+- Text a database can't store, such as NUL bytes or lone surrogates in a tool's error message,
+  is replaced with U+FFFD rather than failing the write. NaN and infinity in JSON payloads are
+  stored as null.
 
 ## Growth and retention
 

@@ -11,6 +11,7 @@ Two pieces:
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any
 from uuid import UUID
@@ -22,7 +23,10 @@ except ImportError as e:  # pragma: no cover - depends on environment
     raise ImportError("the LangChain adapter needs langchain-core: pip install 'relock-memory[langchain]'") from e
 
 from ..memory import Memory
+from ..signals import is_control_flow
 from .toolkit import Toolkit
+
+log = logging.getLogger("relock_memory")
 
 
 class RelockCallbackHandler(BaseCallbackHandler):
@@ -32,6 +36,9 @@ class RelockCallbackHandler(BaseCallbackHandler):
     LangGraph's ``ToolNode``, which catches the error afterwards). Tools that
     *return* error strings instead are seen as successes unless their output is
     a ``ToolMessage`` with ``status="error"``.
+
+    A tool that is also wrapped with ``@mem.wrap`` is recorded once, by this handler.
+    LangGraph interrupts and cancellations are not outcomes and are never recorded.
     """
 
     raise_error = False
@@ -52,14 +59,27 @@ class RelockCallbackHandler(BaseCallbackHandler):
         ep = self.memory.current_episode()
         if ep is None:
             return
-        exps = ep._bind_tool(name, None)
+        try:
+            exps = ep._bind_tool(name, None)
+        except Exception:  # instrumentation must never break the tool call
+            log.exception("relock failed to bind LangChain tool %r", name)
+            return
         if exps:
+            ep._claim_tool(name)  # a @mem.wrap inside this tool leaves the recording to us
             with self._lock:
-                self._runs[run_id] = (ep, exps)
+                self._runs[run_id] = (ep, exps, name)
 
-    def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
+    def _finish(self, run_id: UUID) -> tuple[Any, list[Any]] | None:
         with self._lock:
             entry = self._runs.pop(run_id, None)
+        if entry is None:
+            return None
+        ep, exps, name = entry
+        ep._release_tool(name)
+        return ep, exps
+
+    def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
+        entry = self._finish(run_id)
         if entry is None:
             return
         ep, exps = entry
@@ -69,9 +89,8 @@ class RelockCallbackHandler(BaseCallbackHandler):
             ep._observe_quietly(exps, result=getattr(output, "content", output))
 
     def on_tool_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
-        with self._lock:
-            entry = self._runs.pop(run_id, None)
-        if entry is None:
+        entry = self._finish(run_id)
+        if entry is None or is_control_flow(error):  # interrupt(), Command(goto=...), cancellation
             return
         ep, exps = entry
         ep._observe_quietly(exps, error=error)

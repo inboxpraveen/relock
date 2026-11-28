@@ -11,6 +11,7 @@ to the "context collapse" that repeated full rewrites cause:
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -71,10 +72,25 @@ def parse_ops(raw: Iterable[Any]) -> list[Op]:
         cid = r.get("id", r.get("clause", r.get("clause_id")))
         text = r.get("text", r.get("new_text"))
         after = r.get("after")
-        ops.append(Op(name, id=str(cid) if cid is not None else None,
-                      text=str(text).strip() if text is not None else None,
-                      after=str(after) if after is not None else None))
+        ops.append(Op(name, id=_clause_ref(cid), text=str(text).strip() if text is not None else None,
+                      after=_clause_ref(after)))
     return ops
+
+
+def _clause_ref(value: Any) -> str | None:
+    """A clause id as a model may write it: ``"c2"``, ``"C2"``, ``2`` or ``"2"`` all mean ``c2``."""
+    if value is None or isinstance(value, bool):
+        return None if value is None else str(value)
+    text = str(value).strip()
+    if text.isdigit():
+        return f"c{int(text)}"
+    if text[:1] in ("c", "C") and text[1:].isdigit():
+        return f"c{int(text[1:])}"
+    return text
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.casefold().split()).rstrip(".")
 
 
 def validate(
@@ -96,19 +112,26 @@ def validate(
         raise DeltaError(f"delta has {len(ops)} ops; at most {max_ops} allowed")
     ids = {c.id for c in clauses}
     removed: set[str] = set()
+    touched: dict[str, int] = {}
     remaining = len(clauses)
     for i, op in enumerate(ops):
+        if not isinstance(op, Op) or op.op not in OPS:
+            raise DeltaError(f"op #{i}: unknown op {getattr(op, 'op', op)!r} (use replace/add/remove)")
         if op.op in ("replace", "remove"):
             if not op.id:
                 raise DeltaError(f"op #{i} ({op.op}) needs a clause id")
             if op.id not in ids or op.id in removed:
                 raise DeltaError(f"op #{i}: clause {op.id!r} does not exist")
+            if op.id in touched:
+                raise DeltaError(f"op #{i}: clause {op.id!r} is already changed by op #{touched[op.id]}; "
+                                 "use one op per clause")
+            touched[op.id] = i
             if editable is not None and op.id not in editable:
                 raise DeltaError(
                     f"op #{i}: clause {op.id!r} is locked (only {sorted(editable)} fired in this episode)"
                 )
         if op.op in ("replace", "add"):
-            if not op.text:
+            if not isinstance(op.text, str) or not op.text.strip():
                 raise DeltaError(f"op #{i} ({op.op}) needs non-empty text")
             if len(op.text) > max_clause_chars:
                 raise DeltaError(f"op #{i}: clause text longer than {max_clause_chars} chars")
@@ -124,6 +147,12 @@ def validate(
     by_id = {c.id: c.text for c in clauses}
     if all(op.op == "replace" and by_id.get(op.id or "") == op.text for op in ops):
         raise DeltaError("delta does not change anything")
+    # A new or rewritten clause that repeats another adds nothing a model can follow better.
+    new, _ = apply(clauses, ops, len(clauses) + len(ops) + 1_000_000)
+    counts = Counter(_norm(c.text) for c in new)
+    for c in new:
+        if counts[_norm(c.text)] > 1 and by_id.get(c.id) != c.text:  # duplicates it created, not old ones
+            raise DeltaError(f"delta would leave two identical clauses ({c.text!r})")
 
 
 def apply(clauses: Sequence[Clause], ops: Sequence[Op], clause_seq: int) -> tuple[tuple[Clause, ...], int]:

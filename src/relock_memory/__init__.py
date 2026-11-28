@@ -26,6 +26,7 @@ from .policy import WritePolicy
 from .retrieval import BM25Retriever, EmbeddingRetriever, HybridRetriever, Retriever
 from .rewriters import (
     CallableRewriter,
+    Evidence,
     HintRewriter,
     LLMRewriter,
     Proposal,
@@ -51,7 +52,7 @@ from .types import (
     Verdict,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "BM25Retriever",
@@ -65,6 +66,7 @@ __all__ = [
     "Episode",
     "EpisodeClosedError",
     "ErrorClass",
+    "Evidence",
     "Expectation",
     "HintRewriter",
     "Hit",

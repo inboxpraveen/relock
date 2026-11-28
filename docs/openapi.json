@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "relock",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "summary": "Agent memory that fixes the rule that fired, in place and only on trusted evidence, so corrected mistakes don't come back.",
     "description": "Language-neutral API for relock. Call it from your harness, the code that runs tools and checks results, never from the model. Loop: POST /episodes, /recall (put `context` in the prompt), report each tool call with /tool-result, then /close. Authenticate with `Authorization: Bearer $RELOCK_TOKEN` when the server has a token.",
     "license": {
@@ -130,6 +130,27 @@
           }
         }
       },
+      "Hit": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Item"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "score": {
+                "type": "number",
+                "description": "Retrieval score; higher is more relevant."
+              },
+              "rank": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Position in this recall, from 0."
+              }
+            }
+          }
+        ]
+      },
       "ErrorDetail": {
         "type": "object",
         "properties": {
@@ -157,14 +178,16 @@
               "programmatic",
               "semantic",
               "unknown"
-            ]
+            ],
+            "description": "Default: programmatic for a 4xx status, else unknown (semantic for source=verifier)."
           },
           "detail_trusted": {
             "type": "boolean",
             "default": true,
             "description": "false if message/correction echo remote content; the failure still counts but its text never reaches the rewriter."
           }
-        }
+        },
+        "description": "How a failure is weighed. The fields mean the same for every source."
       },
       "Outcome": {
         "type": "object",
@@ -199,7 +222,7 @@
           },
           "verifier": {
             "type": "string",
-            "description": "Verifier name, for source=verifier."
+            "description": "Verifier name. Only with source=verifier; a 400 otherwise."
           }
         }
       },
@@ -247,6 +270,39 @@
             "type": "number"
           },
           "delta": {}
+        }
+      },
+      "EpisodeSummary": {
+        "type": "object",
+        "properties": {
+          "episode_id": {
+            "type": "string"
+          },
+          "recalled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Refs of the items recalled or used in the episode."
+          },
+          "expectations": {
+            "type": "integer",
+            "description": "Expectations recorded in the episode."
+          },
+          "rewrites": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Rewrites made in the episode, by item id."
+          },
+          "close_decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            },
+            "description": "Decisions taken at close (with rewrite_on=close); these carry no expectation_id or matched."
+          }
         }
       }
     }
@@ -435,6 +491,11 @@
                   "exist_ok": {
                     "type": "boolean",
                     "default": false
+                  },
+                  "author": {
+                    "type": "string",
+                    "default": "api",
+                    "description": "Recorded as the version's author, for audit."
                   }
                 }
               }
@@ -660,7 +721,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Item"
+                        "$ref": "#/components/schemas/Hit"
                       }
                     }
                   }
@@ -862,7 +923,7 @@
                       },
                       "verifier": {
                         "type": "string",
-                        "description": "Verifier name, for source=verifier."
+                        "description": "Verifier name. Only with source=verifier; a 400 otherwise."
                       }
                     }
                   },
@@ -958,7 +1019,7 @@
                       },
                       "verifier": {
                         "type": "string",
-                        "description": "Verifier name, for source=verifier."
+                        "description": "Verifier name. Only with source=verifier; a 400 otherwise."
                       }
                     }
                   },
@@ -1110,7 +1171,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/EpisodeSummary"
                 }
               }
             }

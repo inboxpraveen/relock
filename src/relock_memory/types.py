@@ -27,6 +27,9 @@ class ConflictError(RelockError):
 class NotFoundError(RelockError, KeyError):
     """Raised when an item, version, episode or expectation does not exist."""
 
+    def __str__(self) -> str:  # KeyError's str() would wrap the message in quotes
+        return str(self.args[0]) if len(self.args) == 1 else super().__str__()
+
 
 class StoreError(RelockError):
     """The database failed or could not be reached. The driver's exception is chained as the cause.
