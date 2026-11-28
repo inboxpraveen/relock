@@ -181,3 +181,124 @@ def test_postgres_serves_threads_from_a_connection_pool():
     assert _in_threads(8, work) == []
     assert 1 < store.pool_stats()["open"] <= 4
     m.close()
+
+
+# ---------------------------------------------------------------- scale
+def test_confirmations_do_not_reload_every_item(mem, orders, monkeypatch):
+    _item, get_orders = orders
+    loads = []
+    real = mem.store.active
+    monkeypatch.setattr(mem.store, "active", lambda *a, **k: loads.append(1) or real(*a, **k))
+    with mem.episode("t") as ep:
+        ep.recall("fetch orders by date")
+        for _ in range(5):
+            get_orders("2026-03-14")
+            hits = ep.recall("fetch orders by date")
+    assert len(loads) == 1
+    assert hits[0].item.confirmations == 5  # recall still reports current confidence
+
+
+def test_incremental_index_ranks_exactly_like_a_fresh_one(mem):
+    import random
+
+    rnd = random.Random(7)
+    words = "orders invoice refund date currency ledger report shipping account export retry page".split()
+    for i in range(60):
+        mem.add(f"{rnd.choice(words)} procedure {i}", [" ".join(rnd.choices(words, k=6)) + f" step{i}"],
+                key=f"k{i}", kind=rnd.choice(["procedure", "fact"]))
+    queries = [" ".join(rnd.choices(words, k=3)) for _ in range(25)]
+    for round_ in range(4):
+        for i in rnd.sample(range(60), 5):  # new versions of some items, between queries
+            mem.edit(f"k{i}", [{"op": "add", "text": " ".join(rnd.choices(words, k=4)) + f" r{round_}"}])
+        mem.archive(f"k{round_}")
+        items = list(mem._active_items())
+        for q in queries:
+            got = [(h.item.id, h.item.version, h.score) for h in mem.search(q, k=8)]  # the long-lived index
+            want = [(i.id, i.version, s) for i, s in rl.BM25Retriever().rank(q, items, 8)]
+            assert got == want
+
+
+def test_filtered_recall_only_returns_matching_items(mem, orders):
+    mem.add("Orders fact", ["The orders API paginates from 0."], key="orders.fact", kind="fact", tags=["orders"])
+    with mem.episode("t") as ep:
+        assert {h.item.key for h in ep.recall("orders api", k=5, kinds=["fact"])} == {"orders.fact"}
+        assert {h.item.key for h in ep.recall("orders api", k=5, tags=["orders"])} == {"orders.fetch", "orders.fact"}
+        assert {i.key for i in ep.labile.values()} == {"orders.fetch", "orders.fact"}
+
+
+def test_a_long_episode_keeps_only_open_expectations_in_memory(mem, orders):
+    _, get_orders = orders
+    with mem.episode("long") as ep:
+        ep.recall("fetch orders by date")
+        for _ in range(300):
+            get_orders("2026-03-14")
+        assert len(ep._expectations) == 0
+    assert ep.summary["expectations"] == 300
+
+
+def _snapshot(items):
+    return {i.id: (i.version, i.archived) for i in items}
+
+
+def test_content_changes_refresh_only_what_changed_across_processes(tmp_path, monkeypatch):
+    path = str(tmp_path / "shared.db")
+    a, b = rl.Memory(path), rl.Memory(path)  # two processes sharing one database
+    for i in range(30):
+        a.add(f"procedure {i}", [f"step {i}"], key=f"p{i}")
+    monkeypatch.setattr("relock_memory.memory._CHANGE_WINDOW_S", 0.0)  # no re-read window for old writers
+    a.search("procedure")  # warm a's cache
+    full_loads, reread = [], []
+    real, real_changed = a.store.active, a.store.changed_since
+    monkeypatch.setattr(a.store, "active", lambda *x, **k: full_loads.append(1) or real(*x, **k))
+    monkeypatch.setattr(a.store, "changed_since", lambda *x: reread.extend(real_changed(*x)) or real_changed(*x))
+    b.add("new procedure", ["a new step"], key="new")
+    b.edit("p3", [{"op": "add", "text": "and log it"}])
+    b.archive("p4")
+    b.rollback("p3", 1)
+    a.edit("p5", [{"op": "add", "text": "edited by a"}])
+    assert _snapshot(a._active_items()) == _snapshot(real())
+    assert {h.item.key for h in a.search("new step", k=1)} == {"new"}
+    assert full_loads == []
+    assert {i.key for i in reread} <= {"new", "p3", "p4", "p5"}
+    a.close()
+    b.close()
+
+
+def test_changes_from_older_relock_writers_are_still_picked_up(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "mixed.db")
+    a = rl.Memory(path)
+    for i in range(5):
+        a.add(f"procedure {i}", [f"step {i}"], key=f"p{i}")
+    assert len(a._active_items()) == 5
+    con = sqlite3.connect(path)  # a relock 0.2 replica archives p2: no revision stamp on the item
+    con.execute("UPDATE relock_items SET archived = 1, updated_at = ? WHERE key = 'p2'", (rl._util.now(),))
+    con.execute("UPDATE relock_meta SET v = CAST(CAST(v AS INTEGER) + 1 AS TEXT) WHERE k = 'revision'")
+    con.commit()
+    con.close()
+    assert "p2" not in {i.key for i in a._active_items()}
+    a.close()
+
+
+def test_a_version_1_database_is_migrated_in_place(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "v1.db")
+    m = rl.Memory(path)
+    m.add("Fetch orders", ["Call get_orders."], key="orders.fetch")
+    m.close()
+    con = sqlite3.connect(path)  # turn it back into a 0.2.x database
+    con.execute("DROP INDEX relock_items_rev")
+    con.execute("ALTER TABLE relock_items DROP COLUMN rev")
+    con.execute("UPDATE relock_meta SET v = '1' WHERE k = 'schema_version'")
+    con.commit()
+    con.close()
+    m = rl.Memory(path)
+    m.edit("orders.fetch", [{"op": "add", "text": "Use ISO dates."}])
+    assert m.get("orders.fetch").version == 2
+    assert [h.item.version for h in m.search("orders iso dates")] == [2]
+    with m.store._tx(write=False) as cur:
+        cur.execute("SELECT v FROM relock_meta WHERE k = 'schema_version'")
+        assert cur.fetchone()[0] == "2"
+    m.close()

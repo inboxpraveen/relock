@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import datetime as _dt
 import functools
 import inspect
 import logging
@@ -18,7 +19,7 @@ from .delta import Op, apply, parse_ops, validate
 from .delta import diff as clause_diff
 from .episode import Episode
 from .policy import WritePolicy
-from .retrieval import EmbedFn, Retriever, default_retriever
+from .retrieval import EmbedFn, Retriever, default_retriever, rank_items
 from .rewriters import HintRewriter, Rewriter
 from .stores import SQLStore, open_store
 from .types import Clause, ConflictError, Hit, Item, NotFoundError
@@ -26,6 +27,13 @@ from .types import Clause, ConflictError, Hit, Item, NotFoundError
 F = TypeVar("F", bound=Callable[..., Any])
 
 log = logging.getLogger("relock_memory")
+
+_CHANGE_WINDOW_S = 120.0
+"""On a cache refresh, items updated this long before the previous refresh are re-read too.
+
+Writers from relock < 0.3 don't stamp the revision on the item they change, so during a rolling
+upgrade their changes are found by time instead. The margin covers clock skew between hosts and
+slow transactions; re-reading an unchanged item is harmless."""
 
 _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 
@@ -85,7 +93,9 @@ class Memory:
         self._open: weakref.WeakValueDictionary[str, Episode] = weakref.WeakValueDictionary()
         self._open_lock = threading.Lock()
         self._unbound_warned: set[str] = set()
-        self._cache: tuple[int, list[Item]] | None = None
+        self._snapshot: tuple[int, tuple[Item, ...]] | None = None  # (revision, active items by id)
+        self._cache_items: dict[str, Item] = {}
+        self._cache_since = ""
         self._cache_lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -113,19 +123,51 @@ class Memory:
             except Exception:  # a logging hook must not break memory
                 pass
 
-    def _invalidate(self) -> None:
-        with self._cache_lock:
-            self._cache = None
+    def _active_items(self) -> tuple[Item, ...]:
+        """Active, unarchived items, cached until any process changes memory content.
 
-    def _active_items(self) -> list[Item]:
+        The store's revision counter moves on content changes only (create, rewrite, edit,
+        rollback, archive), so confirmations and failures never force a reload.
+        """
         rev = self.store.revision()
+        snap = self._snapshot
+        if snap is not None and snap[0] == rev:
+            return snap[1]
         with self._cache_lock:
-            if self._cache is not None and self._cache[0] == rev:
-                return self._cache[1]
-        items = self.store.active()
-        with self._cache_lock:
-            self._cache = (rev, items)
-        return items
+            snap = self._snapshot
+            rev = self.store.revision()
+            if snap is not None and snap[0] == rev:
+                return snap[1]
+            started = _dt.datetime.now(_dt.timezone.utc)
+            if snap is None:
+                self._cache_items = {i.id: i for i in self.store.active()}
+            else:
+                # Only items changed since the cached revision (or recently, for older writers).
+                for item in self.store.changed_since(snap[0], self._cache_since):
+                    if item.archived or item.status != "active":
+                        self._cache_items.pop(item.id, None)
+                    else:
+                        self._cache_items[item.id] = item
+            items = tuple(sorted(self._cache_items.values(), key=lambda i: i.id))
+            self._snapshot = (rev, items)
+            self._cache_since = (started - _dt.timedelta(seconds=_CHANGE_WINDOW_S)).isoformat(timespec="microseconds")
+            return items
+
+    def _ranked_hits(self, query: str, k: int, *, kinds: Sequence[str] | None = None,
+                     tags: Sequence[str] | None = None) -> list[Hit]:
+        items = self._active_items()
+        candidates = None
+        if kinds or tags:
+            wanted_kinds, wanted_tags = set(kinds or ()), set(tags or ())
+            candidates = {i.id for i in items
+                          if (not wanted_kinds or i.kind in wanted_kinds) and (not wanted_tags or wanted_tags & set(i.tags))}
+        ranked = rank_items(self.retriever, query, items, k, candidates)
+        if not ranked:
+            return []
+        # The cached items may carry old confidence counters; refresh just the hits.
+        fresh = self.store.counters([(item.id, item.version) for item, _ in ranked])
+        return [Hit(replace(item, **fresh[(item.id, item.version)]) if (item.id, item.version) in fresh else item,
+                    float(score), rank) for rank, (item, score) in enumerate(ranked)]
 
     def _register(self, ep: Episode) -> None:
         with self._open_lock:
@@ -189,7 +231,6 @@ class Memory:
             if exist_ok and key is not None:
                 return self.get(key)
             raise
-        self._invalidate()
         self._emit("create", item_id=item.id, version=1, data={"key": key, "title": item.title,
                                                                 "clauses": [c.to_dict() for c in item.clauses]})
         return item
@@ -208,12 +249,10 @@ class Memory:
 
     def search(self, query: str, k: int = 5) -> list[Hit]:
         """Read-only retrieval. Unlike :meth:`Episode.recall` it does not unlock anything."""
-        ranked = self.retriever.rank(query, self._active_items(), k)
-        return [Hit(item, float(score), rank) for rank, (item, score) in enumerate(ranked)]
+        return self._ranked_hits(query, k)
 
     def archive(self, ref: str, archived: bool = True) -> None:
         self.store.set_archived(ref, archived)
-        self._invalidate()
         self._emit("archive" if archived else "unarchive", item_id=self.store.resolve(ref))
 
     # ------------------------------------------------------------------ episodes
@@ -253,7 +292,6 @@ class Memory:
                       parent_version=current.version, superseded_by=None, change_kind=kind, delta=delta,
                       reason=reason or None, episode_id=None, evidence=(), author=actor, created_at=now())
         self.store.commit_version(new, expected_current=current.version, stale_reason=f"{kind} to v{new.version}")
-        self._invalidate()
         self._emit(kind, item_id=current.id, version=new.version, data={
             "from_version": current.version, "to_version": new.version, "reason": reason, "actor": actor,
             "changes": clause_diff(current.clauses, new.clauses), **extra})

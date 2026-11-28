@@ -25,7 +25,9 @@ from ..types import Clause, ConflictError, Item, NotFoundError, StoreError
 
 log = logging.getLogger("relock_memory")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+"""v2 adds ``relock_items.rev``: the revision that last changed the item, so caches refresh
+only what changed. A v1 database is migrated in place when it is opened."""
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS relock_meta (
@@ -38,7 +40,8 @@ CREATE TABLE IF NOT EXISTS relock_items (
     current_version INTEGER NOT NULL,
     archived {bool} NOT NULL DEFAULT {false},
     created_at {ts} NOT NULL,
-    updated_at {ts} NOT NULL
+    updated_at {ts} NOT NULL,
+    rev INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS relock_versions (
     item_id TEXT NOT NULL REFERENCES relock_items(id),
@@ -138,6 +141,12 @@ CREATE INDEX IF NOT EXISTS relock_events_type ON relock_events (type, at);
 CREATE INDEX IF NOT EXISTS relock_episodes_started ON relock_episodes (started_at);
 CREATE INDEX IF NOT EXISTS relock_errors_episode ON relock_errors (episode_id);
 CREATE INDEX IF NOT EXISTS relock_errors_expectation ON relock_errors (expectation_id);
+"""
+
+# Created after migrations, since they index columns a v1 database lacks.
+_DDL_LATE = """
+CREATE INDEX IF NOT EXISTS relock_items_rev ON relock_items (rev);
+CREATE INDEX IF NOT EXISTS relock_items_updated ON relock_items (updated_at);
 """
 
 _VERSION_COLS = (
@@ -259,6 +268,10 @@ class SQLStore:
     def _init_lock(self, cur: Any) -> None:
         """Hook: serialise schema creation when several processes start at once."""
 
+    def _has_column(self, cur: Any, table: str, column: str) -> bool:
+        cur.execute(f"PRAGMA table_info({table})")
+        return any(r[1] == column for r in cur.fetchall())
+
     def _exec(self, cur: Any, sql: str, params: Sequence[Any] = ()) -> Any:
         cur.execute(self._sql(sql), tuple(params))
         return cur
@@ -267,21 +280,45 @@ class SQLStore:
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
+    def _table_exists(self, cur: Any, table: str) -> bool:
+        self._exec(cur, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,))
+        return cur.fetchone() is not None
+
+    def _schema_version(self, cur: Any) -> int | None:
+        if not self._table_exists(cur, "relock_meta"):
+            return None
+        self._exec(cur, "SELECT v FROM relock_meta WHERE k = 'schema_version'")
+        row = cur.fetchone()
+        return None if row is None else int(row[0])
+
     def init(self) -> None:
-        ddl = _DDL.format(**self.types)
+        """Create or upgrade the schema. A database that is already current is left untouched,
+        so replicas restarting under traffic take no table locks."""
         with self._tx() as cur:
             self._init_lock(cur)
-            for stmt in (s.strip() for s in ddl.split(";")):
+            version = self._schema_version(cur)
+            if version == SCHEMA_VERSION:
+                return
+            if version is not None and version > SCHEMA_VERSION:
+                raise StoreError(f"{self!r}: the database uses relock schema v{version}, newer than this "
+                                 f"relock-memory supports (v{SCHEMA_VERSION}). Upgrade relock-memory.")
+            for stmt in (s.strip() for s in _DDL.format(**self.types).split(";")):
                 if stmt:
                     cur.execute(stmt)
-            self._exec(cur, "SELECT v FROM relock_meta WHERE k = 'schema_version'")
-            row = cur.fetchone()
-            if row is None:
+            if version is None:
                 self._exec(cur, "INSERT INTO relock_meta (k, v) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
                 self._exec(cur, "INSERT INTO relock_meta (k, v) VALUES ('revision', '0')")
-            elif int(row[0]) > SCHEMA_VERSION:
-                raise StoreError(f"{self!r}: the database uses relock schema v{row[0]}, newer than this "
-                                 f"relock-memory supports (v{SCHEMA_VERSION}). Upgrade relock-memory.")
+            else:
+                self._migrate(cur, version)
+            for stmt in (s.strip() for s in _DDL_LATE.split(";")):
+                if stmt:
+                    cur.execute(stmt)
+
+    def _migrate(self, cur: Any, from_version: int) -> None:
+        if from_version < 2 and not self._has_column(cur, "relock_items", "rev"):
+            cur.execute("ALTER TABLE relock_items ADD COLUMN rev INTEGER NOT NULL DEFAULT 0")
+        self._exec(cur, "UPDATE relock_meta SET v = ? WHERE k = 'schema_version'", (str(SCHEMA_VERSION),))
+        log.info("relock store %r migrated from schema v%d to v%d", self, from_version, SCHEMA_VERSION)
 
     def close(self) -> None:
         with self._lock:
@@ -289,8 +326,16 @@ class SQLStore:
                 self._conn.close()
                 self._conn = None
 
-    def _bump(self, cur: Any) -> None:
+    def _bump(self, cur: Any, item_id: str) -> None:
+        """Advance the content revision and stamp it on the changed item (same transaction).
+
+        Bumps serialise on the meta row, so revisions become visible in order: a reader that
+        sees revision R also sees every change stamped R or lower.
+        """
         self._exec(cur, "UPDATE relock_meta SET v = CAST(CAST(v AS INTEGER) + 1 AS TEXT) WHERE k = 'revision'")
+        self._exec(cur, "SELECT v FROM relock_meta WHERE k = 'revision'")
+        rev = int(cur.fetchone()[0])
+        self._exec(cur, "UPDATE relock_items SET rev = ? WHERE id = ?", (rev, item_id))
 
     def revision(self) -> int:
         with self._tx(write=False) as cur:
@@ -349,7 +394,7 @@ class SQLStore:
                             "VALUES (?, ?, ?, ?, ?, ?)", (item.id, item.key, item.version, False, t, t))
             self._exec(cur, f"INSERT INTO relock_versions ({_VERSION_COLS}) VALUES ({', '.join('?' * 23)})",
                        self._version_params(item))
-            self._bump(cur)
+            self._bump(cur, item.id)
         return item
 
     def _select_versions(self, where: str) -> str:
@@ -384,6 +429,17 @@ class SQLStore:
             self._exec(cur, self._select_versions(where) + " ORDER BY v.item_id", params)
             return [self._item_from(r) for r in self._rows(cur)]
 
+    def changed_since(self, revision: int, updated_since: str) -> list[Item]:
+        """Current versions of items changed after ``revision`` (or updated since ``updated_since``).
+
+        The time clause also catches writers from relock < 0.3, which don't stamp revisions.
+        Archived items are included (``archived=True``) so caches can drop them.
+        """
+        with self._tx(write=False) as cur:
+            self._exec(cur, self._select_versions("v.version = i.current_version AND (i.rev > ? OR i.updated_at >= ?)"),
+                       (revision, updated_since))
+            return [self._item_from(r) for r in self._rows(cur)]
+
     def history(self, ref: str) -> list[Item]:
         item_id = self.resolve(ref)
         with self._tx(write=False) as cur:
@@ -413,8 +469,20 @@ class SQLStore:
             self._exec(cur, "UPDATE relock_errors SET status = 'stale', reason = ? "
                             "WHERE item_id = ? AND version = ? AND status = 'pending'",
                        (stale_reason, new.id, expected_current))
-            self._bump(cur)
+            self._bump(cur, new.id)
         return new
+
+    def counters(self, refs: Sequence[tuple[str, int]]) -> dict[tuple[str, int], dict[str, Any]]:
+        """Current confidence counters for a few ``(item_id, version)`` pairs."""
+        if not refs:
+            return {}
+        cond = " OR ".join(["(item_id = ? AND version = ?)"] * len(refs))
+        with self._tx(write=False) as cur:
+            self._exec(cur, f"SELECT item_id, version, alpha, beta, confirmations, failures "
+                            f"FROM relock_versions WHERE {cond}", [x for ref in refs for x in ref])
+            rows = cur.fetchall()
+        return {(r[0], int(r[1])): {"alpha": float(r[2]), "beta": float(r[3]), "confirmations": int(r[4]),
+                                    "failures": int(r[5])} for r in rows}
 
     def next_version_number(self, item_id: str) -> int:
         with self._tx(write=False) as cur:
@@ -435,7 +503,7 @@ class SQLStore:
         with self._tx() as cur:
             self._exec(cur, "UPDATE relock_items SET archived = ?, updated_at = ? WHERE id = ?",
                        (archived, now(), item_id))
-            self._bump(cur)
+            self._bump(cur, item_id)
 
     # ------------------------------------------------------------------ episodes
     def create_episode(self, episode_id: str, task: str, meta: dict[str, Any]) -> None:

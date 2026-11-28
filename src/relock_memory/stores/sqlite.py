@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from typing import Any
 
 from .sql import SQLStore
@@ -30,11 +31,29 @@ class SQLiteStore(SQLStore):
     def _connect(self) -> Any:
         conn = sqlite3.connect(self.path or ":memory:", timeout=self.timeout, check_same_thread=False,
                                isolation_level=None)
-        conn.execute("PRAGMA foreign_keys = ON")
-        if self.path not in ("", ":memory:"):
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = NORMAL")
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            if self.path not in ("", ":memory:"):
+                self._enable_wal(conn)
+                conn.execute("PRAGMA synchronous = NORMAL")
+        except BaseException:
+            conn.close()
+            raise
         return conn
+
+    def _enable_wal(self, conn: Any) -> None:
+        # Switching to WAL needs a moment of exclusive access and does not wait on the busy
+        # timeout, so processes opening a new file together retry here. WAL then persists.
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                    conn.execute("PRAGMA journal_mode = WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.02)
 
     def _begin(self, cur: Any, write: bool) -> None:
         # Writes take the write lock up front, so two writers never deadlock upgrading a read

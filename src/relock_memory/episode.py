@@ -60,8 +60,10 @@ class Episode:
         self.closed = False
         self._lock = threading.RLock()
         self._labile: dict[str, Item] = {}
-        self._expectations: dict[str, Expectation] = {}
+        self._expectations: dict[str, Expectation] = {}  # open ones only; resolved ones are dropped
+        self._explicit: dict[tuple[str, str], list[str]] = {}  # (item id, tool) -> open explicit expectation ids
         self._resolved: set[str] = set()
+        self._n_expectations = 0
         self._rewrites: Counter[str] = Counter()
         self._declined: dict[str, tuple[str, ...]] = {}
         self._token: Any = None
@@ -127,13 +129,7 @@ class Episode:
                tags: list[str] | None = None) -> Recall:
         """Retrieve the top-``k`` active items. Every returned item becomes labile."""
         self._ensure_open()
-        items = self.memory._active_items()
-        if kinds:
-            items = [i for i in items if i.kind in kinds]
-        if tags:
-            items = [i for i in items if set(tags) & set(i.tags)]
-        ranked = self.memory.retriever.rank(query, items, k)
-        hits = [Hit(item, float(score), rank) for rank, (item, score) in enumerate(ranked)]
+        hits = self.memory._ranked_hits(query, k, kinds=kinds, tags=tags)
         with self._lock:
             self._ensure_open()
             for h in hits:
@@ -228,6 +224,9 @@ class Episode:
                 author=author,
             )
             self._expectations[exp.id] = exp
+            self._n_expectations += 1
+            if tool and not _auto:
+                self._explicit.setdefault((item.id, tool), []).append(exp.id)
         self.store.add_expectation({
             "id": exp.id, "episode_id": self.id, "item_id": item.id, "version": item.version,
             "statement": exp.statement, "clause_ids": cited, "tool": tool,
@@ -259,9 +258,12 @@ class Episode:
             # above and here must win, or a rewrite could commit after the episode re-locked.
             self._ensure_open()
             exp = self._expectation(expectation)
-            if exp.id in self._resolved:
-                raise RelockError(f"expectation {exp.id} was already observed")
             self._resolved.add(exp.id)
+            self._expectations.pop(exp.id, None)
+            if exp.tool and not exp.auto:
+                open_ids = self._explicit.get((exp.item_id, exp.tool), [])
+                if exp.id in open_ids:
+                    open_ids.remove(exp.id)
 
             exc = error if isinstance(error, BaseException) else None
             # A failure the caller states explicitly is never overridden by the expectation's
@@ -294,6 +296,8 @@ class Episode:
 
     def _expectation(self, expectation: Expectation | str) -> Expectation:
         exp_id = expectation.id if isinstance(expectation, Expectation) else expectation
+        if exp_id in self._resolved:
+            raise RelockError(f"expectation {exp_id} was already observed")
         exp = self._expectations.get(exp_id)
         if exp is None:
             raise NotFoundError(f"expectation {exp_id!r} does not belong to episode {self.id}")
@@ -308,7 +312,6 @@ class Episode:
             return Observation(exp.id, True, reason, d)
         self.store.bump_confidence(exp.item_id, exp.version, d_alpha=1.0, d_confirm=1)
         cancelled = self._cancel_pending(exp.item_id, exp.version)
-        self.memory._invalidate()
         d = Decision(Verdict.CONFIRMED, "prediction held" + (f"; cancelled {len(cancelled)} pending error(s)"
                      if cancelled else ""), exp.item_id, exp.version)
         self.memory._emit("confirm", episode_id=self.id, item_id=exp.item_id, version=exp.version,
@@ -361,7 +364,6 @@ class Episode:
             return Observation(exp.id, False, reason, d, error_id)
 
         self.store.bump_confidence(exp.item_id, exp.version, d_beta=1.0, d_fail=1)
-        self.memory._invalidate()
         self.memory._emit("prediction_error", episode_id=self.id, item_id=exp.item_id, version=exp.version,
                           data={"error_id": error_id, "weight": adm.weight, "source": signal.source.value,
                                 "error_class": signal.error_class.value if signal.error_class else None,
@@ -468,7 +470,6 @@ class Episode:
         with self._lock:
             self._labile[item_id] = new
             self._rewrites[item_id] += 1
-        self.memory._invalidate()
         changes = clause_diff(current.clauses, new.clauses)
         self.memory._emit("rewrite", episode_id=self.id, item_id=item_id, version=new.version, data={
             "from_version": current.version, "to_version": new.version, "delta": new.delta,
@@ -534,11 +535,9 @@ class Episode:
                     targets += [i for i in self._labile.values() if not i.tools]
             out: list[Expectation] = []
             for item in targets:
-                explicit = next((e for e in self._expectations.values()
-                                 if e.item_id == item.id and e.tool == tool and e.id not in self._resolved
-                                 and not e.auto), None)
-                if explicit is not None:
-                    out.append(explicit)
+                open_ids = self._explicit.get((item.id, tool))
+                if open_ids:
+                    out.append(self._expectations[open_ids[0]])
                 else:
                     out.append(self.expect(item, f"{tool} succeeds", check=succeeds(), tool=tool, _auto=True))
             return out
@@ -566,7 +565,7 @@ class Episode:
             self.summary = {
                 "episode_id": self.id,
                 "recalled": sorted(i.ref for i in self._labile.values()),
-                "expectations": len(self._expectations),
+                "expectations": self._n_expectations,
                 "rewrites": dict(self._rewrites),
                 "close_decisions": [d.to_dict() for d in decisions if d.verdict is not Verdict.PENDING
                                     or d.evidence > 0],

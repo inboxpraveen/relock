@@ -125,6 +125,15 @@ class PostgresStore(SQLStore):
     def _init_lock(self, cur: Any) -> None:
         cur.execute("SELECT pg_advisory_xact_lock(%s)", (_INIT_LOCK_KEY,))
 
+    def _table_exists(self, cur: Any, table: str) -> bool:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
+        return bool(cur.fetchone()[0])
+
+    def _has_column(self, cur: Any, table: str, column: str) -> bool:
+        cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
+                    "AND table_name = %s AND column_name = %s", (table, column))
+        return cur.fetchone() is not None
+
     def close(self) -> None:
         """Close idle connections. Connections in use close when they are returned. Reusable."""
         with self._cv:
