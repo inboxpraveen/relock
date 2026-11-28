@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from typing import Any, TypeVar
 
-from ._util import new_id, now
+from ._util import new_id, now, truncate
 from .delta import Op, apply, parse_ops, validate
 from .delta import diff as clause_diff
 from .episode import Episode
@@ -27,6 +27,23 @@ from .types import Clause, ConflictError, Hit, Item, NotFoundError
 F = TypeVar("F", bound=Callable[..., Any])
 
 log = logging.getLogger("relock_memory")
+
+EVENT_LOG_LEVELS: dict[str, int] = {
+    # memory content changed
+    "create": logging.INFO, "rewrite": logging.INFO, "manual": logging.INFO, "rollback": logging.INFO,
+    "archive": logging.INFO, "unarchive": logging.INFO, "prune": logging.INFO,
+    # something went wrong, or a gate held a write back
+    "prediction_error": logging.INFO, "blocked": logging.INFO, "declined": logging.INFO,
+    "conflict": logging.INFO, "rewrite_deferred": logging.INFO, "invalid_edit": logging.WARNING,
+}
+"""Level at which each ledger event is logged on the ``relock_memory`` logger; others log at DEBUG.
+
+Every event is logged once it is stored. Lines name the event, episode, item and version, plus a
+short reason for failures. The full event (with payloads such as clause text and tool errors) is
+attached as ``record.relock_event`` only when DEBUG is enabled, since payloads can carry user data.
+"""
+
+_REASON_KEYS = ("reason", "error", "observed")
 
 _CHANGE_WINDOW_S = 120.0
 """On a cache refresh, items updated this long before the previous refresh are re-read too.
@@ -48,6 +65,27 @@ def _clauses(value: str | Iterable[str]) -> list[str]:
     if not parts:
         raise ValueError("an item needs at least one clause")
     return parts
+
+
+def _log_event(ev: dict[str, Any]) -> None:
+    level = EVENT_LOG_LEVELS.get(ev["type"], logging.DEBUG)
+    if not log.isEnabledFor(level):
+        return
+    parts = [f"relock {ev['type']}"]
+    if ev.get("item_id"):
+        parts.append(f"item={ev['item_id']}" + (f" v{ev['version']}" if ev.get("version") is not None else ""))
+    if ev.get("episode_id"):
+        parts.append(f"episode={ev['episode_id']}")
+    data = ev.get("data") or {}
+    if level > logging.DEBUG:
+        reason = next((data[k] for k in _REASON_KEYS if data.get(k)), None)
+        if reason:
+            parts.append(f"reason={truncate(str(reason), 300)!r}")
+        if ev["type"] == "rewrite":
+            parts.append(f"v{data.get('from_version')}->v{data.get('to_version')} by {data.get('author')}")
+    full = log.isEnabledFor(logging.DEBUG)
+    record = ev if full else {k: ev.get(k) for k in ("id", "at", "type", "episode_id", "item_id", "version")}
+    log.log(level, " ".join(parts), extra={"relock_event": record})
 
 
 class Memory:
@@ -93,6 +131,7 @@ class Memory:
         self._open: weakref.WeakValueDictionary[str, Episode] = weakref.WeakValueDictionary()
         self._open_lock = threading.Lock()
         self._unbound_warned: set[str] = set()
+        self._hook_failures = 0
         self._snapshot: tuple[int, tuple[Item, ...]] | None = None  # (revision, active items by id)
         self._cache_items: dict[str, Item] = {}
         self._cache_since = ""
@@ -117,11 +156,17 @@ class Memory:
     # ------------------------------------------------------------------ internals
     def _emit(self, type_: str, **kw: Any) -> None:
         ev = self.store.add_event(type_, **kw)
+        _log_event(ev)
         if self.on_event is not None:
             try:
                 self.on_event(ev)
-            except Exception:  # a logging hook must not break memory
-                pass
+            except Exception:  # a logging hook must not break memory, but its owner must hear of it
+                self._hook_failures += 1
+                n = self._hook_failures
+                if n == 1 or n % 1000 == 0:
+                    log.warning("relock on_event hook raised on a %r event (%d failure(s) so far); the event is "
+                                "still in the ledger. Further failures are logged every 1000th.", type_, n,
+                                exc_info=True)
 
     def _active_items(self) -> tuple[Item, ...]:
         """Active, unarchived items, cached until any process changes memory content.

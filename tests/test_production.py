@@ -302,3 +302,97 @@ def test_a_version_1_database_is_migrated_in_place(tmp_path):
         cur.execute("SELECT v FROM relock_meta WHERE k = 'schema_version'")
         assert cur.fetchone()[0] == "2"
     m.close()
+
+
+# ---------------------------------------------------------------- observability
+def test_ledger_events_are_logged_with_ids_and_reasons(mem, orders, caplog):
+    _, get_orders = orders
+    caplog.set_level(logging.INFO, logger="relock_memory")
+    with mem.episode("fetch") as ep:
+        ep.recall("fetch orders by date")
+        for _ in range(2):  # two trusted errors: enough evidence to rewrite
+            with pytest.raises(rl.ToolError):
+                get_orders("03/14/2026")
+    lines = [r.getMessage() for r in caplog.records]
+    rewrite = [m for m in lines if m.startswith("relock rewrite")]
+    assert len(rewrite) == 1 and ep.id in rewrite[0] and "v1->v2" in rewrite[0]
+    assert any(m.startswith("relock prediction_error") and "invalid date" in m for m in lines)
+    assert not any(m.startswith("relock recall") for m in lines)  # routine events stay at DEBUG
+    assert all("data" not in r.relock_event for r in caplog.records if hasattr(r, "relock_event"))
+
+
+def test_debug_logging_attaches_the_full_event(mem, orders, caplog):
+    caplog.set_level(logging.DEBUG, logger="relock_memory")
+    with mem.episode("t", ticket="T-1") as ep:
+        ep.recall("fetch orders by date")
+    events = {r.relock_event["type"]: r.relock_event for r in caplog.records if hasattr(r, "relock_event")}
+    assert events["recall"]["data"]["query"] == "fetch orders by date"
+    assert events["episode_open"]["data"]["meta"] == {"ticket": "T-1"}
+
+
+def test_a_failing_event_hook_is_reported_and_the_event_kept(store, caplog):
+    def hook(ev):
+        raise RuntimeError("hook bug")
+
+    m = rl.Memory(store, on_event=hook)
+    m.add("A", ["x"], key="a")
+    m.add("B", ["y"], key="b")
+    warnings = [r for r in caplog.records if "on_event hook raised" in r.getMessage()]
+    assert len(warnings) == 1 and warnings[0].exc_info is not None
+    assert len(m.events(type="create")) == 2
+
+
+def test_a_rewrite_on_stale_evidence_is_recorded_as_a_conflict(mem, orders):
+    _, get_orders = orders
+    a, b = mem.episode("a"), mem.episode("b")
+    a.recall("fetch orders by date")
+    b.recall("fetch orders by date")
+    for _ in range(2):
+        with a.activate(), pytest.raises(rl.ToolError):
+            get_orders("03/14/2026")  # a rewrites the item to v2
+    with b.activate(), pytest.raises(rl.ToolError):
+        get_orders("03/14/2026")  # b's evidence is about v1
+    a.close()
+    b.close()
+    conflicts = mem.events(type="conflict")
+    assert [e["episode_id"] for e in conflicts] == [b.id]
+    assert "evidence is stale" in conflicts[0]["data"]["reason"]
+
+
+def test_a_spent_rewrite_budget_is_recorded(mem, orders):
+    _, get_orders = orders
+    with mem.episode("t") as ep:
+        ep.recall("fetch orders by date")
+        for _ in range(4):  # 2 errors rewrite to v2; 2 more on v2 would rewrite again, past the budget
+            with pytest.raises(rl.ToolError):
+                get_orders("03/14/2026")
+    deferred = mem.events(type="rewrite_deferred")
+    assert deferred and "budget" in deferred[0]["data"]["reason"]
+
+
+def test_a_failing_llm_rewriter_is_logged_and_named_in_the_decision(store, caplog):
+    def down(prompt):
+        raise ConnectionError("endpoint down")
+
+    m = rl.Memory(store, rewriter=rl.LLMRewriter(down, fallback=rl.CallableRewriter(lambda r: None)))
+    item = m.add("Fetch orders", ["Call get_orders with MM/DD/YYYY dates."], key="orders.fetch")
+    with m.episode("t") as ep:
+        ep.recall("fetch orders")
+        for _ in range(2):
+            obs = ep.observe(ep.expect(item, "orders come back"),
+                             error=rl.ToolError("invalid date", correction="Use ISO dates."))
+    assert obs.decision.verdict is rl.Verdict.DECLINED
+    assert "endpoint down" in obs.decision.reason
+    assert "endpoint down" in m.events(type="declined")[0]["data"]["reason"]
+    assert any("LLM call failed" in r.getMessage() for r in caplog.records)
+
+
+def test_huge_error_text_is_capped_in_the_ledger(mem, orders):
+    import json
+
+    item, _ = orders
+    with mem.episode("t") as ep:
+        ep.recall("fetch orders by date")
+        ep.observe(ep.expect(item, "orders come back"), error=RuntimeError("x" * 50_000))
+    stored = mem.store.errors(item.id)
+    assert stored and all(len(json.dumps(e["diff"])) < 10_000 for e in stored)

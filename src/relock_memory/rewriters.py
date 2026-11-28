@@ -9,6 +9,7 @@ size class: one item, explicit clause ids, strict JSON, one worked example.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ from ._util import tokenize, truncate
 from .delta import DeltaError, Op, parse_ops, validate
 from .llm import extract_json
 from .types import Item
+
+log = logging.getLogger("relock_memory")
 
 
 @dataclass(frozen=True)
@@ -197,6 +200,7 @@ class LLMRewriter:
         self.last_error: str | None = None
 
     def propose(self, request: RewriteRequest) -> Proposal | None:
+        self.last_error = None
         prompt = build_prompt(request)
         editable = set(request.editable) if request.editable is not None else None
         feedback = ""
@@ -206,6 +210,8 @@ class LLMRewriter:
                 raw = self.llm(prompt + feedback)
             except Exception as e:  # endpoint down, auth error...: don't crash the agent's episode
                 self.last_error = f"llm call failed: {type(e).__name__}: {e}"
+                log.warning("relock rewriter %s: the LLM call failed on item %s v%d (%s: %s)", self.name,
+                            request.item.ref, request.item.version, type(e).__name__, e)
                 break
             try:
                 data: Any = extract_json(raw)
@@ -226,8 +232,13 @@ class LLMRewriter:
                     f"\n\nYour previous reply was rejected: {e}.\n"
                     f"Previous reply: {truncate(raw, 400)}\nReply again with one valid JSON object only."
                 )
+        if self.last_error and not self.last_error.startswith("llm call failed"):
+            log.warning("relock rewriter %s: no valid edit for item %s v%d after %d attempt(s); last problem: %s",
+                        self.name, request.item.ref, request.item.version, self.max_attempts, self.last_error)
         if self.fallback is None:
             return None
+        log.info("relock rewriter %s: falling back to %s for item %s v%d", self.name,
+                 getattr(self.fallback, "name", type(self.fallback).__name__), request.item.ref, request.item.version)
         proposal = self.fallback.propose(request)
         if proposal is None:
             return None

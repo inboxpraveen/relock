@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from ._util import new_id, now, short_repr
+from ._util import new_id, now, short_repr, truncate
 from .checks import as_check, succeeds
 from .delta import DeltaError, apply, validate
 from .delta import diff as clause_diff
@@ -43,6 +43,9 @@ if TYPE_CHECKING:
     from .memory import Memory
 
 log = logging.getLogger("relock_memory")
+
+MAX_TEXT = 2000
+"""Longest error message, reason or query text stored in the ledger; longer text is cut."""
 
 _MISSING: Any = object()
 
@@ -71,7 +74,7 @@ class Episode:
         self.summary: dict[str, Any] = {}
         self.store.create_episode(self.id, task, self.meta)
         memory._register(self)
-        memory._emit("episode_open", episode_id=self.id, data={"task": task})
+        memory._emit("episode_open", episode_id=self.id, data={"task": task, "meta": self.meta})
 
     # ------------------------------------------------------------------ lifecycle
     def __enter__(self) -> Episode:
@@ -134,9 +137,10 @@ class Episode:
             self._ensure_open()
             for h in hits:
                 self._labile[h.item.id] = h.item
-        self.store.add_retrievals(self.id, query, [(h.item.id, h.item.version, h.rank, h.score) for h in hits])
+        stored_query = truncate(query, MAX_TEXT)
+        self.store.add_retrievals(self.id, stored_query, [(h.item.id, h.item.version, h.rank, h.score) for h in hits])
         self.memory._emit("recall", episode_id=self.id, data={
-            "query": query, "hits": [{"ref": h.item.ref, "version": h.item.version, "score": round(h.score, 4)}
+            "query": stored_query, "hits": [{"ref": h.item.ref, "version": h.item.version, "score": round(h.score, 4)}
                                      for h in hits]})
         return Recall(query, hits)
 
@@ -271,6 +275,9 @@ class Episode:
             explicit_failure = signal is not None and signal.passed is False
             if signal is None:
                 signal = Signal.tool_error(error) if error is not None else Signal.ok()
+            if len(signal.message) > MAX_TEXT or len(signal.correction or "") > MAX_TEXT:
+                signal = signal.with_(message=truncate(signal.message, MAX_TEXT),
+                                      correction=truncate(signal.correction, MAX_TEXT) if signal.correction else None)
             value = None if result is _MISSING else result
 
             if matched is not None:
@@ -286,8 +293,10 @@ class Episode:
             else:
                 is_match, reason = error is None, ("completed" if error is None else str(error))
 
+            reason = truncate(str(reason), MAX_TEXT)
+            err_text = f"{type(exc).__name__}: {exc}" if exc else (str(error) if error else None)
             outcome = {"result": short_repr(value, 400) if result is not _MISSING else None,
-                       "error": (f"{type(exc).__name__}: {exc}" if exc else (str(error) if error else None))}
+                       "error": truncate(err_text, MAX_TEXT) if err_text else None}
             self.store.resolve_expectation(exp.id, matched=is_match, outcome=outcome, signal=signal.to_dict())
 
             if is_match:
@@ -387,8 +396,11 @@ class Episode:
             return Decision(Verdict.BLOCKED, "item is not labile in this episode", item_id)
         current = self.memory.get(item_id)
         if current.version != recalled.version:
-            return Decision(Verdict.CONFLICT, f"item moved to v{current.version} after it was recalled "
-                            f"(v{recalled.version}); evidence is stale", item_id, recalled.version)
+            why = (f"item moved to v{current.version} after it was recalled (v{recalled.version}); "
+                   "evidence is stale")
+            self.memory._emit("conflict", episode_id=self.id, item_id=item_id, version=recalled.version,
+                              data={"current_version": current.version, "reason": why})
+            return Decision(Verdict.CONFLICT, why, item_id, recalled.version)
         pending = self.store.errors(item_id, current.version, status="pending")
         evidence = sum(e["weight"] for e in pending)
         authoritative = any(e["authoritative"] for e in pending)
@@ -399,7 +411,11 @@ class Episode:
         if not authoritative and evidence + 1e-9 < required:
             return Decision(Verdict.PENDING, f"evidence {evidence:.2f} < required {required:.2f}", **base)
         if self._rewrites[item_id] >= self.policy.max_rewrites_per_item_per_episode:
-            return Decision(Verdict.PENDING, "rewrite budget for this item in this episode is spent", **base)
+            why = (f"rewrite budget for this item in this episode is spent "
+                   f"({self.policy.max_rewrites_per_item_per_episode}); the evidence waits for a later episode")
+            self.memory._emit("rewrite_deferred", episode_id=self.id, item_id=item_id, version=current.version,
+                              data={"reason": why, "evidence": round(evidence, 4), "required": round(required, 4)})
+            return Decision(Verdict.PENDING, why, **base)
         ids = tuple(e["id"] for e in pending)
         if self._declined.get(item_id) == ids:
             return Decision(Verdict.DECLINED, "rewriter already declined this evidence", **base)
@@ -418,19 +434,24 @@ class Episode:
             max_ops=self.policy.max_ops,
             max_clause_chars=self.policy.max_clause_chars,
         )
+        rewriter = self.memory.rewriter
         try:
-            proposal = self.memory.rewriter.propose(request)
+            proposal = rewriter.propose(request)
         except Exception as e:  # never let a rewriter crash the agent
-            log.exception("relock rewriter failed")
+            log.warning("relock rewriter %s raised on item %s v%d (episode %s); the item is unchanged",
+                        getattr(rewriter, "name", type(rewriter).__name__), item_id, current.version, self.id,
+                        exc_info=True)
             self._declined[item_id] = ids
             self.memory._emit("rewriter_error", episode_id=self.id, item_id=item_id, version=current.version,
                               data={"error": f"{type(e).__name__}: {e}"})
             return Decision(Verdict.DECLINED, f"rewriter raised {type(e).__name__}: {e}", **base)
         if proposal is None or not proposal.ops:
             self._declined[item_id] = ids
+            failure = getattr(rewriter, "last_error", None)
+            why = f"rewriter proposed no change ({failure})" if failure else "rewriter proposed no change"
             self.memory._emit("declined", episode_id=self.id, item_id=item_id, version=current.version,
-                              data={"evidence": list(ids)})
-            return Decision(Verdict.DECLINED, "rewriter proposed no change", **base)
+                              data={"evidence": list(ids), "reason": why})
+            return Decision(Verdict.DECLINED, why, **base)
         try:
             validate(current.clauses, proposal.ops, editable=set(editable) if editable is not None else None,
                      max_ops=self.policy.max_ops, max_clause_chars=self.policy.max_clause_chars)
@@ -466,6 +487,8 @@ class Episode:
             self.store.commit_version(new, expected_current=current.version,
                                       stale_reason=f"superseded by v{new.version}")
         except ConflictError as e:
+            self.memory._emit("conflict", episode_id=self.id, item_id=item_id, version=current.version,
+                              data={"reason": f"a concurrent rewrite committed first: {e}"})
             return Decision(Verdict.CONFLICT, str(e), **base)
         with self._lock:
             self._labile[item_id] = new
