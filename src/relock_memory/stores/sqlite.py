@@ -12,6 +12,8 @@ from .sql import SQLStore
 class SQLiteStore(SQLStore):
     placeholder = "?"
     types = {"bool": "INTEGER", "false": "0", "ts": "TEXT", "json": "TEXT", "real": "REAL"}
+    driver_errors = (sqlite3.Error,)
+    integrity_errors = (sqlite3.IntegrityError,)
 
     def __init__(self, path: str = "relock.db", *, timeout: float = 30.0) -> None:
         super().__init__()
@@ -34,5 +36,7 @@ class SQLiteStore(SQLStore):
             conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
-    def _begin(self, cur: Any) -> None:
-        cur.execute("BEGIN IMMEDIATE")
+    def _begin(self, cur: Any, write: bool) -> None:
+        # Writes take the write lock up front, so two writers never deadlock upgrading a read
+        # lock. Reads stay deferred, so they don't queue behind writers in other processes.
+        cur.execute("BEGIN IMMEDIATE" if write else "BEGIN")

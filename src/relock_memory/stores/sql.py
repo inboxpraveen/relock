@@ -14,13 +14,16 @@ Tables (all prefixed ``relock_``):
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
 from .._util import dumps, loads, new_id, now, ts
-from ..types import Clause, ConflictError, Item, NotFoundError
+from ..types import Clause, ConflictError, Item, NotFoundError, StoreError
+
+log = logging.getLogger("relock_memory")
 
 SCHEMA_VERSION = 1
 
@@ -130,6 +133,11 @@ CREATE TABLE IF NOT EXISTS relock_events (
 );
 CREATE INDEX IF NOT EXISTS relock_events_item ON relock_events (item_id, at);
 CREATE INDEX IF NOT EXISTS relock_events_episode ON relock_events (episode_id, at);
+CREATE INDEX IF NOT EXISTS relock_events_at ON relock_events (at);
+CREATE INDEX IF NOT EXISTS relock_events_type ON relock_events (type, at);
+CREATE INDEX IF NOT EXISTS relock_episodes_started ON relock_episodes (started_at);
+CREATE INDEX IF NOT EXISTS relock_errors_episode ON relock_errors (episode_id);
+CREATE INDEX IF NOT EXISTS relock_errors_expectation ON relock_errors (expectation_id);
 """
 
 _VERSION_COLS = (
@@ -140,10 +148,19 @@ _VERSION_COLS = (
 
 
 class SQLStore:
-    """Dialect-neutral implementation. Subclasses provide a connection and type names."""
+    """Dialect-neutral implementation. Subclasses provide a connection and type names.
+
+    The base class shares one connection behind a lock (SQLite: an in-memory database
+    exists only on its connection). :class:`~relock_memory.stores.postgres.PostgresStore`
+    overrides :meth:`_acquire` / :meth:`_release` with a connection pool.
+    """
 
     placeholder = "?"
     types: dict[str, str] = {"bool": "INTEGER", "false": "0", "ts": "TEXT", "json": "TEXT", "real": "REAL"}
+    driver_errors: tuple[type[BaseException], ...] = ()
+    """The driver's exceptions; they are re-raised as :class:`StoreError` (cause chained)."""
+    integrity_errors: tuple[type[BaseException], ...] = ()
+    """Constraint violations; re-raised as :class:`ConflictError` (a concurrent writer won)."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -153,27 +170,94 @@ class SQLStore:
     def _connect(self) -> Any:  # pragma: no cover - abstract
         raise NotImplementedError
 
+    def _open_connection(self) -> Any:
+        try:
+            return self._connect()
+        except Exception as e:
+            if isinstance(e, (*self.driver_errors, OSError)):
+                raise StoreError(f"{self!r}: cannot connect: {type(e).__name__}: {e}") from e
+            raise
+
+    def _acquire(self) -> Any:
+        self._lock.acquire()
+        try:
+            if self._conn is None:
+                self._conn = self._open_connection()
+            return self._conn
+        except BaseException:
+            self._lock.release()
+            raise
+
+    def _release(self, conn: Any, *, broken: bool) -> None:
+        try:
+            if broken:
+                self._discard(conn)
+                if self._conn is conn:
+                    self._conn = None
+        finally:
+            self._lock.release()
+
+    @staticmethod
+    def _discard(conn: Any) -> None:
+        try:
+            conn.close()
+        except Exception:  # already dead
+            pass
+
+    def _is_disconnect(self, exc: BaseException, conn: Any) -> bool:
+        """Whether ``exc`` means the connection itself is unusable (dialect hook)."""
+        return False
+
+    def _translate(self, exc: Exception, broken: bool) -> None:
+        """Re-raise a driver exception as a relock error; return to re-raise it unchanged."""
+        if isinstance(exc, self.integrity_errors):
+            raise ConflictError(f"{self!r}: a concurrent write won: {type(exc).__name__}: {exc}") from exc
+        if isinstance(exc, self.driver_errors):
+            if broken:
+                log.warning("relock store %r lost its database connection (%s: %s); it was discarded and "
+                            "the next call reconnects", self, type(exc).__name__, exc)
+                raise StoreError(f"{self!r}: database connection lost ({type(exc).__name__}: {exc}). "
+                                 "The connection was discarded and the next call reconnects. A write that "
+                                 "failed while committing may or may not have been applied.") from exc
+            raise StoreError(f"{self!r}: {type(exc).__name__}: {exc}") from exc
+
     def _sql(self, sql: str) -> str:
         return sql if self.placeholder == "?" else sql.replace("?", self.placeholder)
 
     @contextmanager
-    def _tx(self) -> Iterator[Any]:
-        with self._lock:
-            if self._conn is None:
-                self._conn = self._connect()
-            cur = self._conn.cursor()
-            try:
-                self._begin(cur)
-                yield cur
-                self._conn.commit()
-            except BaseException:
-                self._conn.rollback()
-                raise
-            finally:
-                cur.close()
+    def _tx(self, write: bool = True) -> Iterator[Any]:
+        """One transaction on one connection. Store methods never nest transactions."""
+        conn = self._acquire()
+        broken = False
+        cur = None
+        try:
+            cur = conn.cursor()
+            self._begin(cur, write)
+            yield cur
+            conn.commit()
+        except BaseException as e:
+            broken = self._is_disconnect(e, conn)
+            if not broken:
+                try:
+                    conn.rollback()
+                except Exception:
+                    broken = True
+            if isinstance(e, Exception):
+                self._translate(e, broken)
+            raise
+        finally:
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            self._release(conn, broken=broken)
 
-    def _begin(self, cur: Any) -> None:
+    def _begin(self, cur: Any, write: bool) -> None:
         """Hook for dialects that need an explicit BEGIN."""
+
+    def _init_lock(self, cur: Any) -> None:
+        """Hook: serialise schema creation when several processes start at once."""
 
     def _exec(self, cur: Any, sql: str, params: Sequence[Any] = ()) -> Any:
         cur.execute(self._sql(sql), tuple(params))
@@ -186,13 +270,18 @@ class SQLStore:
     def init(self) -> None:
         ddl = _DDL.format(**self.types)
         with self._tx() as cur:
+            self._init_lock(cur)
             for stmt in (s.strip() for s in ddl.split(";")):
                 if stmt:
                     cur.execute(stmt)
             self._exec(cur, "SELECT v FROM relock_meta WHERE k = 'schema_version'")
-            if cur.fetchone() is None:
+            row = cur.fetchone()
+            if row is None:
                 self._exec(cur, "INSERT INTO relock_meta (k, v) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
                 self._exec(cur, "INSERT INTO relock_meta (k, v) VALUES ('revision', '0')")
+            elif int(row[0]) > SCHEMA_VERSION:
+                raise StoreError(f"{self!r}: the database uses relock schema v{row[0]}, newer than this "
+                                 f"relock-memory supports (v{SCHEMA_VERSION}). Upgrade relock-memory.")
 
     def close(self) -> None:
         with self._lock:
@@ -204,7 +293,7 @@ class SQLStore:
         self._exec(cur, "UPDATE relock_meta SET v = CAST(CAST(v AS INTEGER) + 1 AS TEXT) WHERE k = 'revision'")
 
     def revision(self) -> int:
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, "SELECT v FROM relock_meta WHERE k = 'revision'")
             row = cur.fetchone()
             return int(row[0]) if row else 0
@@ -269,7 +358,7 @@ class SQLStore:
 
     def resolve(self, ref: str) -> str:
         """Map an id or key to an item id."""
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, "SELECT id FROM relock_items WHERE id = ? OR key = ?", (ref, ref))
             row = cur.fetchone()
         if row is None:
@@ -278,7 +367,7 @@ class SQLStore:
 
     def get(self, ref: str, version: int | None = None) -> Item:
         item_id = self.resolve(ref)
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             if version is None:
                 self._exec(cur, self._select_versions("v.item_id = ? AND v.version = i.current_version"), (item_id,))
             else:
@@ -291,13 +380,13 @@ class SQLStore:
     def active(self, include_archived: bool = False) -> list[Item]:
         where = "v.status = 'active'" + ("" if include_archived else " AND i.archived = ?")
         params: tuple[Any, ...] = () if include_archived else (False,)
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, self._select_versions(where) + " ORDER BY v.item_id", params)
             return [self._item_from(r) for r in self._rows(cur)]
 
     def history(self, ref: str) -> list[Item]:
         item_id = self.resolve(ref)
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, self._select_versions("v.item_id = ?") + " ORDER BY v.version", (item_id,))
             return [self._item_from(r) for r in self._rows(cur)]
 
@@ -328,7 +417,7 @@ class SQLStore:
         return new
 
     def next_version_number(self, item_id: str) -> int:
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, "SELECT MAX(version) FROM relock_versions WHERE item_id = ?", (item_id,))
             row = cur.fetchone()
             return int(row[0] or 0) + 1
@@ -362,7 +451,7 @@ class SQLStore:
                             "WHERE episode_id = ? AND status = 'open'", (now(), episode_id))
 
     def get_episode(self, episode_id: str) -> dict[str, Any]:
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, "SELECT * FROM relock_episodes WHERE id = ?", (episode_id,))
             rows = self._rows(cur)
         if not rows:
@@ -384,7 +473,7 @@ class SQLStore:
 
     def retrieved(self, episode_id: str) -> dict[str, int]:
         """Item id -> most recently recalled version within the episode."""
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, "SELECT item_id, MAX(version) FROM relock_retrievals WHERE episode_id = ? GROUP BY item_id",
                        (episode_id,))
             return {r[0]: int(r[1]) for r in cur.fetchall()}
@@ -399,7 +488,7 @@ class SQLStore:
                         bool(e.get("auto")), now()))
 
     def get_expectation(self, expectation_id: str) -> dict[str, Any]:
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, "SELECT * FROM relock_expectations WHERE id = ?", (expectation_id,))
             rows = self._rows(cur)
         if not rows:
@@ -437,7 +526,7 @@ class SQLStore:
         if status is not None:
             where.append("status = ?")
             params.append(status)
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, f"SELECT * FROM relock_errors WHERE {' AND '.join(where)} ORDER BY created_at, id", params)
             rows = self._rows(cur)
         for r in rows:
@@ -450,7 +539,7 @@ class SQLStore:
         if not ids:
             return []
         marks = ", ".join("?" * len(ids))
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, f"SELECT * FROM relock_errors WHERE id IN ({marks}) ORDER BY created_at, id", tuple(ids))
             rows = self._rows(cur)
         for r in rows:
@@ -491,7 +580,7 @@ class SQLStore:
             where.append("type = ?")
             params.append(type_)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, f"SELECT * FROM relock_events {clause} ORDER BY at DESC, id DESC LIMIT ?",
                        (*params, int(limit)))
             rows = self._rows(cur)
@@ -513,7 +602,7 @@ class SQLStore:
             "errors_blocked": "SELECT COUNT(*) FROM relock_errors WHERE status = 'blocked'",
             "errors_consumed": "SELECT COUNT(*) FROM relock_errors WHERE status = 'consumed'",
         }
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             for name, q in queries.items():
                 self._exec(cur, q, (False,) if "archived" in q else ())
                 out[name] = int(cur.fetchone()[0])
@@ -522,7 +611,7 @@ class SQLStore:
     # ------------------------------------------------------------------ export
     def iter_rewrites(self) -> list[dict[str, Any]]:
         """Every reconsolidation with its parent version and evidence (for distillation datasets)."""
-        with self._tx() as cur:
+        with self._tx(write=False) as cur:
             self._exec(cur, self._select_versions("v.change_kind = 'reconsolidate'") + " ORDER BY v.created_at")
             rows = [self._item_from(r) for r in self._rows(cur)]
         return [{"item": r} for r in rows]

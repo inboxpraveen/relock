@@ -69,3 +69,115 @@ def test_toolkit_episode_reaches_wrapped_tools_in_the_same_context(mem, orders):
     assert mem.get(item.key).version == 2
     kit.end_episode()
     assert mem.current_episode() is None
+
+
+# ---------------------------------------------------------------- storage robustness
+from tests.conftest import PG_URL  # noqa: E402
+
+needs_pg = pytest.mark.skipif(not PG_URL, reason="set RELOCK_TEST_POSTGRES_URL to run Postgres tests")
+
+
+def _fresh_pg() -> str:
+    from relock_memory.stores.postgres import PostgresStore
+
+    s = PostgresStore(PG_URL)
+    s.drop_all()
+    s.close()
+    return PG_URL
+
+
+@pytest.fixture(params=["sqlite-file", pytest.param("postgres", marks=needs_pg)])
+def shared_url(request, tmp_path):
+    """A database that several Memory instances (think: replicas) open at once."""
+    return str(tmp_path / "shared.db") if request.param == "sqlite-file" else _fresh_pg()
+
+
+def _in_threads(n, fn):
+    errors: list[BaseException] = []
+
+    def run(i):
+        try:
+            fn(i)
+        except BaseException as e:  # collected for the assertion
+            errors.append(e)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return errors
+
+
+def test_replicas_starting_together_on_a_fresh_database_all_succeed(shared_url):
+    def start(_):
+        m = rl.Memory(shared_url)
+        try:
+            for i in range(60):
+                m.add("Seeded procedure", ["Do the thing."], key=f"seed.{i}", exist_ok=True)
+        finally:
+            m.close()
+
+    assert _in_threads(6, start) == []
+    m = rl.Memory(shared_url)
+    assert len(m.items()) == 60
+    m.close()
+
+
+def test_a_newer_schema_is_refused_with_a_clear_error(tmp_path):
+    path = str(tmp_path / "x.db")
+    rl.Memory(path).close()
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute("UPDATE relock_meta SET v = '99' WHERE k = 'schema_version'")
+    con.commit()
+    con.close()
+    with pytest.raises(rl.StoreError, match="schema v99"):
+        rl.Memory(path)
+
+
+def test_a_file_that_is_not_a_database_raises_a_store_error_naming_it(tmp_path):
+    path = tmp_path / "notes.db"
+    path.write_bytes(b"this is not a sqlite database" * 100)
+    with pytest.raises(rl.StoreError, match=r"notes.db"):
+        rl.Memory(str(path))
+
+
+@needs_pg
+def test_postgres_recovers_after_the_server_drops_connections():
+    import psycopg
+
+    m = rl.Memory(_fresh_pg())
+    m.add("Fetch orders", ["Call get_orders."], key="orders.fetch")
+    with psycopg.connect(PG_URL, autocommit=True) as admin:
+        admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                      "WHERE datname = current_database() AND pid <> pg_backend_pid()")
+    outcomes = []
+    for _ in range(3):
+        try:
+            outcomes.append(m.get("orders.fetch").version)
+        except rl.StoreError as e:
+            outcomes.append(str(e))
+    assert outcomes[-2:] == [1, 1], outcomes  # at most the first call fails; then it reconnects
+    m.close()
+
+
+@needs_pg
+def test_postgres_serves_threads_from_a_connection_pool():
+    from relock_memory.stores.postgres import PostgresStore
+
+    _fresh_pg()
+    store = PostgresStore(PG_URL, pool_size=4)
+    m = rl.Memory(store)
+    for i in range(20):
+        m.add(f"proc {i}", [f"step {i}"], key=f"p{i}")
+
+    def work(_):
+        with m.episode("w") as ep:
+            for _ in range(20):
+                ep.recall("proc step")
+
+    assert _in_threads(8, work) == []
+    assert 1 < store.pool_stats()["open"] <= 4
+    m.close()

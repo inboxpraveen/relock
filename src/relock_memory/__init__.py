@@ -47,6 +47,7 @@ from .types import (
     Observation,
     Recall,
     RelockError,
+    StoreError,
     Verdict,
 )
 
@@ -86,6 +87,7 @@ __all__ = [
     "SQLiteStore",
     "Signal",
     "Source",
+    "StoreError",
     "ToolError",
     "Toolkit",
     "TransientToolError",

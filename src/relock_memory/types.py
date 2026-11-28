@@ -28,6 +28,14 @@ class NotFoundError(RelockError, KeyError):
     """Raised when an item, version, episode or expectation does not exist."""
 
 
+class StoreError(RelockError):
+    """The database failed or could not be reached. The driver's exception is chained as the cause.
+
+    A lost connection is discarded, so the next call reconnects. A write that fails this way
+    was rolled back unless the connection dropped while committing; then its outcome is unknown.
+    """
+
+
 @dataclass(frozen=True)
 class Clause:
     """One atomic instruction inside an item. Edits operate on clauses, not on whole items."""
