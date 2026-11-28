@@ -55,6 +55,8 @@ class Episode:
 
     def __init__(self, memory: Memory, task: str = "", meta: dict[str, Any] | None = None, *,
                  policy: WritePolicy | None = None) -> None:
+        if policy is not None and not isinstance(policy, WritePolicy):
+            raise TypeError(f"policy must be a WritePolicy, not {type(policy).__name__}")
         self.memory = memory
         self.store = memory.store
         self.policy = policy or memory.policy  # fixed for the episode's lifetime

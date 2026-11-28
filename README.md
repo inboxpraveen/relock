@@ -427,12 +427,14 @@ directly queryable. The schema is documented in [docs/design.md](docs/design.md)
 
 **Logs and audit.** Every ledger event is logged on the `relock_memory` logger as it is stored.
 Content changes, prediction errors, blocked or declined writes, conflicts and deferred rewrites
-log at INFO, with the episode, item, version and a short reason; routine recalls and
-confirmations log at DEBUG. Payloads (clause text, tool errors) are attached to the record as
-`record.relock_event` only at DEBUG, since they can carry user data. A failing `on_event` hook,
-an LLM rewriter that can't be reached and a lost database connection are logged as warnings. The
-full trail stays queryable with `relock events` or SQL; every version keeps its delta, reason,
-author and the error ids that justified it.
+log at INFO, with the episode, item, version and a short reason (for a failure, the first 300
+characters of what went wrong, which can include the tool's error message). Routine recalls and
+confirmations log at DEBUG. Full payloads, such as clause text and complete tool errors, are
+attached to the record as `record.relock_event` only at DEBUG, since they can carry user data. A
+failing `on_event` hook, an LLM rewriter that can't be reached and a lost database connection are
+logged as warnings. `on_event` runs synchronously as each event is stored, so keep it fast or hand
+events to a queue. The full trail stays queryable with `relock events` or SQL; every version keeps
+its delta, reason, author and the error ids that justified it.
 
 **Errors.** A database failure raises `relock.StoreError` naming the store, with the driver's
 exception as its cause. A lost connection is discarded and the next call reconnects. A write that

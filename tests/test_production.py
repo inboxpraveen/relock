@@ -282,6 +282,8 @@ def test_changes_from_older_relock_writers_are_still_picked_up(tmp_path):
     a.close()
 
 
+@pytest.mark.skipif(__import__("sqlite3").sqlite_version_info < (3, 35, 0),
+                    reason="building a v1 file needs ALTER TABLE DROP COLUMN (SQLite 3.35+)")
 def test_a_version_1_database_is_migrated_in_place(tmp_path):
     import sqlite3
 

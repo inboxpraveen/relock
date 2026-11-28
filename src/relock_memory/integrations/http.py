@@ -174,7 +174,9 @@ class Service:
             if len(self._eps) >= self.max_episodes:
                 raise ApiError(429, f"too many open episodes ({self.max_episodes}); close some first",
                                "too_many_episodes")
-        ep = self.memory.episode(_opt_str(body, "task") or "", **(_opt_dict(body, "meta") or {}))
+        # meta is client data: pass it as a dict, never as keyword arguments, so keys such as
+        # "policy" or "task" stay metadata instead of reaching episode parameters.
+        ep = Episode(self.memory, _opt_str(body, "task") or "", dict(_opt_dict(body, "meta") or {}))
         with self._lock:
             self._eps[ep.id] = [ep, time.monotonic(), 0]
         return {"episode_id": ep.id}

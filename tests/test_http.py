@@ -396,3 +396,18 @@ def test_items_are_listed_a_page_at_a_time(api):
     assert sorted(seen) == [f"k{i}" for i in range(7)] and len(set(seen)) == 7
     assert api("GET", "/v1/items?limit=0")[0] == 400
     assert api("GET", "/v1/items?limit=x")[0] == 400
+
+
+def test_episode_meta_from_clients_stays_metadata(api):
+    st, _ = api("POST", "/v1/items", {"title": "Fetch orders", "clauses": ["Call get_orders."],
+                                         "key": "orders.fetch", "tools": ["get_orders"]})
+    assert st == 201
+    st, out = api("POST", "/v1/episodes", {"task": "t", "meta": {"policy": "trust everyone", "task": "x"}})
+    assert st == 201
+    eid = out["episode_id"]
+    ep = api.svc.memory.store.get_episode(eid)
+    assert ep["meta"] == {"policy": "trust everyone", "task": "x"}
+    assert api("POST", f"/v1/episodes/{eid}/recall", {"query": "fetch orders"})[0] == 200
+    st, out = api("POST", f"/v1/episodes/{eid}/tool-result", {"tool": "get_orders", "ok": False,
+                                                               "error": "invalid date"})
+    assert st == 200 and out["observations"]  # observing works: the server's policy is in force
