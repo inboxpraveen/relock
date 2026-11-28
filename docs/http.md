@@ -56,7 +56,7 @@ Items are attributed to a tool through the `tools` list given when the item is a
 | request | use |
 |---|---|
 | `POST /v1/items` | Add a procedure: `title`, `clauses`, optional `key`, `tools`, `exist_ok`. |
-| `GET /v1/items`, `GET /v1/items/{ref}`, `GET /v1/items/{ref}/history` | Read active items, one item, or every version of it. |
+| `GET /v1/items`, `GET /v1/items/{ref}`, `GET /v1/items/{ref}/history` | Read active items (a page at a time: `limit`, default 500, and `after`, the previous page's `next_after`), one item, or every version of it. |
 | `POST /v1/episodes/{id}/use` | Load an item by key, which makes it editable without a search. |
 | `POST /v1/episodes/{id}/expect` | Record an explicit prediction. `clauses` limits which clauses can be rewritten; `tool` binds the prediction to a tool. |
 | `POST /v1/episodes/{id}/observe` | Resolve one expectation. `source` is `tool` (default), `verifier`, `agent` or `environment`. |
@@ -98,6 +98,11 @@ Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these stat
   framings is refused.
 - **Shutdown:** on `SIGTERM` (for example `docker stop`) the server re-locks every open episode
   and closes the database before exiting.
+- **Logs:** the server logs requests and every ledger event at INFO to stderr: rewrites,
+  prediction errors, blocked or declined writes and conflicts, each with episode and item ids.
+  Set `RELOCK_LOG_LEVEL=DEBUG` to include event payloads, or `WARNING` to keep only problems.
+- **Retention:** the ledger grows with every tool call. Run `relock prune --older-than 30d`
+  from a scheduled job (see the README's production notes).
 - **Replicas:** open episodes live in the server process. With more than one replica on a shared
   Postgres database, send each episode's requests to the same replica, for example with sticky
   routing on the episode id.

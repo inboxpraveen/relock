@@ -97,8 +97,12 @@ inertia with fake "it worked" reports and make a poisoned procedure harder to fi
 
 ## Attribution of tool outcomes
 
-A wrapped tool (`@mem.wrap`) or the LangChain callback handler looks up the active episode, using
-the context variable first and then the only open episode in the process. It then resolves:
+A wrapped tool (`@mem.wrap`) or the LangChain callback handler looks up the episode active in the
+caller's context (a context variable). Inside `with mem.episode(...)`, `with ep.activate():` and
+`ep.run(fn, ...)` it is that episode; asyncio tasks inherit it, plain worker threads do not. There
+is no process-wide fallback: with several agents in one process, a tool outcome is attributed only
+to the episode of the agent that made the call. A wrapped tool that runs outside every episode
+while some are open is not recorded, and a warning names it (once per tool). It then resolves:
 
 1. any open, explicit expectation that names this tool for a labile item;
 2. otherwise, an automatic `succeeds()` expectation for each labile item whose `tools` contains the
@@ -129,14 +133,20 @@ All tables are prefixed `relock_`. SQLite stores JSON and timestamps as `TEXT`. 
 
 | table | key columns |
 |---|---|
-| `items` | `id`, `key` (unique), `current_version`, `archived` |
+| `items` | `id`, `key` (unique), `current_version`, `archived`, `rev` (revision of its last content change) |
 | `versions` | `(item_id, version)` PK, `status`, `title`, `clauses`, `clause_seq`, `tags`, `tools`, `meta`, `alpha`, `beta`, `confirmations`, `failures`, `parent_version`, `superseded_by`, `change_kind`, `delta`, `reason`, `episode_id`, `evidence`, `author` |
-| `episodes` | `id`, `task`, `status`, `meta`, `started_at`, `ended_at` |
+| `episodes` | `id`, `task`, `status` (open/closed/abandoned), `meta`, `started_at`, `ended_at` |
 | `retrievals` | `episode_id`, `item_id`, `version`, `query`, `rank`, `score` (the reactivation trace) |
 | `expectations` | `id`, `episode_id`, `item_id`, `version`, `statement`, `clause_ids`, `tool`, `check_spec`, `status` (open/confirmed/violated/void), `outcome`, `signal` |
 | `errors` | `id`, `expectation_id`, `item_id`, `version`, `source`, `error_class`, `weight`, `authoritative`, `diff`, `status` (pending/blocked/cancelled/consumed/stale), `reason` |
 | `events` | append-only audit log: `type`, `episode_id`, `item_id`, `version`, `data` |
-| `meta` | `schema_version`, `revision` (bumped on every content change; used for cross-process cache invalidation) |
+| `meta` | `schema_version` (2), `revision` (bumped on every content change; with `items.rev`, lets each process refresh only the items that changed) |
+
+A database from relock 0.2 (schema v1) is upgraded in place by the first 0.3 process that opens
+it. The upgrade adds `items.rev` and some indexes; 0.2 processes keep working against it, and their
+changes are still picked up by time. `Memory.prune` (`relock prune`) deletes old audit detail
+(retrievals, expectations, errors and events of episodes nothing depends on) and never items or
+versions.
 
 Example query on Postgres:
 
@@ -160,7 +170,8 @@ WHERE v.change_kind = 'reconsolidate' AND v.created_at > now() - interval '7 day
 | Fake confirmations make a poisoned item sticky | Only trusted confirmations raise confidence and inertia. |
 | Rewriter edits unrelated parts of an item | `edit_scope="cited"` locks every clause the failed prediction did not rely on, when it cites clauses. Uncited predictions, such as `@mem.wrap` auto-expectations, leave every clause editable, so the choice falls to the rewriter. `HintRewriter` picks the clause most similar to the correction. Cite clauses when you use an LLM rewriter. |
 | Repeated rewrites collapse an item | Edits are small clause deltas (`max_ops`, `max_clause_chars`); one rewrite per item per episode. |
-| Concurrent episodes overwrite each other | Compare-and-swap on `current_version`; stale evidence becomes `CONFLICT`. |
+| Concurrent episodes overwrite each other | Compare-and-swap on `current_version`; stale evidence becomes `CONFLICT`, recorded as a `conflict` event. |
+| One agent's tool outcome rewrites another agent's memory | Outcomes go only to the episode in the caller's context; there is no process-wide fallback. `Toolkit` instances keep separate episodes, and `policy=` sets trust per episode. |
 | A bad rewrite slips through | Full version history; `rollback` restores any version as a new version; every decision is in `relock_events`. |
 | Late edits after the context is gone | Closed episodes raise `EpisodeClosedError` on any write. Episodes the toolkit or MCP server opened themselves are re-locked after `idle_timeout` seconds (default 1800) without a call, so a client that never ends its task does not keep items editable. |
 | "The user said so" | `Signal.user` and `Episode.correct` default to `authenticated=False` and are blocked; the application must vouch for the user explicitly. |

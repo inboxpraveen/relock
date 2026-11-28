@@ -385,6 +385,8 @@ relock show orders.fetch [--version 1]
 relock history orders.fetch       # clause-level diffs across versions
 relock pending orders.fetch       # pending evidence vs. the rewrite threshold, and what was blocked
 relock events --item orders.fetch # audit log: recalls, predictions, gate decisions, rewrites
+relock prune --older-than 30d [--dry-run]  # delete old audit detail; items and versions stay
+relock stats                      # row counts, to watch growth
 relock rollback orders.fetch 1    # restores v1 as a new version (history is never destroyed)
 relock edit orders.fetch --replace c2 "Pass dates as YYYY-MM-DD."
 relock export traces.jsonl        # SFT and preference pairs from every rewrite
@@ -394,6 +396,7 @@ relock bench [--mode structural|behavioral|both]
 ```
 
 The database is `--db`, or `$RELOCK_DB`, or `./relock.db`. Postgres URLs work everywhere.
+`--log-level INFO` (or `$RELOCK_LOG_LEVEL`) logs relock events to stderr.
 
 ## Configuration
 
@@ -419,6 +422,61 @@ one-method `Retriever` protocol. Only active versions are ever candidates.
 Storage is SQLite by default (WAL mode, safe across processes) or Postgres with
 `pip install "relock-memory[postgres]"`. Postgres uses `JSONB` and `TIMESTAMPTZ`, so the ledger is
 directly queryable. The schema is documented in [docs/design.md](docs/design.md).
+
+## Running in production
+
+**Logs and audit.** Every ledger event is logged on the `relock_memory` logger as it is stored.
+Content changes, prediction errors, blocked or declined writes, conflicts and deferred rewrites
+log at INFO, with the episode, item, version and a short reason; routine recalls and
+confirmations log at DEBUG. Payloads (clause text, tool errors) are attached to the record as
+`record.relock_event` only at DEBUG, since they can carry user data. A failing `on_event` hook,
+an LLM rewriter that can't be reached and a lost database connection are logged as warnings. The
+full trail stays queryable with `relock events` or SQL; every version keeps its delta, reason,
+author and the error ids that justified it.
+
+**Errors.** A database failure raises `relock.StoreError` naming the store, with the driver's
+exception as its cause. A lost connection is discarded and the next call reconnects. A write that
+lost a race to another process raises `relock.ConflictError`; inside an episode it becomes a
+`conflict` decision instead, since the evidence was about a version that no longer exists.
+
+**Several agents in one process.** Give each agent its own episode, or its own `Toolkit`. A
+wrapped tool's outcome goes to the episode in the caller's context only: inside `with ep:`, inside
+`with ep.activate():`, or in work submitted with `ep.run(fn, ...)` (plain threads don't inherit
+the context; asyncio tasks do). `mem.episode(task, policy=...)` sets the write policy for one
+agent. A wrapped tool that runs outside every episode is not recorded; if other episodes are
+open at the time, a warning names the tool.
+
+**Growth and retention.** Items and versions grow only when memory changes. The audit tables grow
+with use: each wrapped tool call adds an expectation and about two events. Prune them on a
+schedule:
+
+```
+relock prune --older-than 30d --dry-run   # counts only
+relock prune --older-than 30d
+```
+
+Pruning deletes an episode's retrievals, expectations, errors and events only when no version was
+written in it and none of its errors is, or may become, evidence for a rewrite. Episodes that must
+stay lose just their per-call confirmations. Episodes a crashed process left open are marked
+`abandoned`; the age must exceed the longest an episode stays open in any replica. SQLite keeps
+its file size until `VACUUM`.
+
+**Postgres.** `PostgresStore(dsn, pool_size=5)` serves concurrent calls from a connection pool.
+It checks idle connections before use, replaces ones the server dropped, and fails fast on an
+unreachable host (`connect_timeout` 10 s unless the DSN sets one). Replicas starting together on
+an empty database are safe. The HTTP server keeps open episodes in memory, so with several
+replicas route each episode's requests to the same one ([docs/http.md](docs/http.md)).
+
+**Upgrading from 0.2.** The first 0.3 process to open a 0.2 database upgrades its schema in place.
+On a large Postgres ledger, run `relock init` once at a quiet time first, since the upgrade builds
+indexes over the events table. 0.2 processes keep working against the upgraded database.
+
+**Scale.** On one laptop with SQLite: at 20,000 items, recall takes 16 ms, a wrapped tool call
+2.3 ms, and recall right after a confirmation 2.7 ms. At 100,000 items, recall takes about
+130 ms, and recall right after another process adds or rewrites an item about 0.2 s, since only
+changed items are re-read. Long episodes stay flat per call. Loading memory costs about 3 KB of
+heap per short item, and the first recall in a new process reads every item: about 1 s at 20,000
+items and 7 s at 100,000.
 
 ## How it relates to other work
 

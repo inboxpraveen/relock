@@ -1,5 +1,80 @@
 # Changelog
 
+## Unreleased (0.3.0)
+
+Production hardening: multi-agent attribution, storage robustness, scale, retention and logging.
+
+**Breaking:**
+
+- A wrapped tool's outcome is attributed only to the episode in the caller's context. The
+  fallback to "the only open episode in the process" is gone: it attributed one agent's tool
+  calls to another agent's episode. In worker threads, use `ep.run(fn, ...)` or
+  `with ep.activate():`.
+- Database failures raise `StoreError` (and lost unique-key races `ConflictError`) instead of raw
+  `sqlite3` / `psycopg` exceptions. The driver's exception is chained as the cause.
+- `GET /v1/items` returns a page: at most `limit` items (default 500), with `total` and
+  `next_after` (pass it back as `after`). Clients that expect every item in one response must
+  follow `next_after`.
+- `policy` is now a keyword of `Memory.episode` (it sets that episode's write policy) instead of
+  being stored as metadata.
+- The database schema is v2. The first 0.3 process upgrades a 0.2 database in place; 0.2
+  processes keep working against it. On a large Postgres ledger, run `relock init` once at a
+  quiet time before rolling out, since the upgrade builds indexes over the events table.
+
+**Multiple agents:**
+
+- `Episode.activate()` and `Episode.run(fn, ...)` carry an episode into worker threads.
+- Separate `Toolkit` instances keep separate episodes.
+- A wrapped tool that runs outside every episode while others are open logs a warning, once per
+  tool.
+- `Memory.episode(policy=...)` and `Toolkit(policy=...)` set trust per agent.
+- `build_server(trust_agent_reports=True)` widens trust for the MCP server's own episodes only.
+  Before, it replaced the shared `Memory`'s policy.
+
+**Storage:**
+
+- Postgres serves concurrent calls from a connection pool (`pool_size`, default 5). It checks idle
+  connections before use and discards dropped ones, so after a database restart each pooled
+  connection fails at most one call.
+  `connect_timeout` defaults to 10 s.
+- Replicas starting together on an empty database no longer race: schema creation takes an
+  advisory lock, and an up-to-date database is opened without DDL.
+- `add(exist_ok=True)` holds when several processes seed the same keys at once.
+- A database written by a newer relock is refused with a clear message.
+- SQLite reads no longer queue behind writers in other processes, and several processes can
+  create a new database file at once.
+
+**Scale:**
+
+- After a content change, each process re-reads only the items that changed. At 100,000 items,
+  recall right after a change went from about 5 s to 0.2 s.
+- Confirmations no longer reload every item. At 20,000 items, recall after a confirmation went
+  from 162 ms to 3 ms.
+- BM25 keeps an incremental inverted index, and `kinds` / `tags` filters reuse it.
+- Long episodes keep only open expectations in memory, so per-call cost stays flat.
+- The embedding cache drops vectors of versions that are no longer active.
+
+**Retention:**
+
+- `Memory.prune(older_than)` and `relock prune --older-than 30d [--dry-run]` delete old audit
+  detail and never touch items or versions. An episode goes only if nothing depends on it.
+  Episodes a crashed process left open are marked `abandoned`.
+- `stats` reports open episodes, retrievals and events.
+- Error text, reasons and queries stored in the ledger are capped at 2000 characters.
+
+**Logging and audit:**
+
+- Every ledger event is logged on the `relock_memory` logger: content changes and failures at
+  INFO with ids and a short reason, routine events at DEBUG, payloads only at DEBUG.
+- New `conflict` and `rewrite_deferred` events, so every case where evidence did not produce a
+  rewrite leaves a trace. `declined` carries the rewriter's reason, such as an unreachable LLM.
+- A failing `on_event` hook, LLM rewriter failures and fallbacks, and lost database connections
+  are logged instead of passing silently. `LLMRewriter.last_error` no longer leaks from one
+  request into the next.
+- `episode_open` records the episode's metadata.
+- `relock --log-level` (or `RELOCK_LOG_LEVEL`) logs to stderr, so `relock mcp` can show events
+  without disturbing its stdio protocol.
+
 ## 0.2.2 - 2026-11-28
 
 Documentation only; no code changes.

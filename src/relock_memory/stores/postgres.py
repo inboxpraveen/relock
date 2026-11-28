@@ -6,7 +6,8 @@ last week?"
 
 Connections come from a small thread-safe pool, so concurrent episodes don't queue
 behind one connection. A connection that sat idle is checked before use, and one the
-server dropped is discarded, so a database restart costs at most one failed call.
+server dropped is discarded, so after a database restart each pooled connection fails at
+most one call.
 """
 
 from __future__ import annotations
