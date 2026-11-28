@@ -46,7 +46,7 @@ class BM25Retriever:
         self.k1, self.b, self.title_boost = k1, b, title_boost
         self._lock = threading.Lock()
         self._docs: dict[str, tuple[Item, int]] = {}  # item id -> (item, document length)
-        self._tf: dict[str, Counter[str]] = {}
+        self._terms: dict[str, tuple[str, ...]] = {}  # item id -> its distinct terms (to remove it)
         self._postings: dict[str, dict[str, int]] = {}  # term -> {item id: term frequency}
         self._total = 0
         self._synced: Sequence[Item] | None = None
@@ -60,7 +60,7 @@ class BM25Retriever:
         tf = Counter(self._doc_tokens(item))
         length = sum(tf.values())
         self._docs[item.id] = (item, length)
-        self._tf[item.id] = tf
+        self._terms[item.id] = tuple(tf)
         self._total += length
         for term, f in tf.items():
             self._postings.setdefault(term, {})[item.id] = f
@@ -68,7 +68,7 @@ class BM25Retriever:
     def _remove(self, item_id: str) -> None:
         _item, length = self._docs.pop(item_id)
         self._total -= length
-        for term in self._tf.pop(item_id):
+        for term in self._terms.pop(item_id):
             posting = self._postings[term]
             del posting[item_id]
             if not posting:
