@@ -304,9 +304,13 @@ class Memory:
         self._emit("archive" if archived else "unarchive", item_id=self.store.resolve(ref))
 
     # ------------------------------------------------------------------ episodes
-    def episode(self, task: str = "", **meta: Any) -> Episode:
-        """Open a reconsolidation window. Use it as a context manager."""
-        return Episode(self, task, meta)
+    def episode(self, task: str = "", *, policy: WritePolicy | None = None, **meta: Any) -> Episode:
+        """Open a reconsolidation window. Use it as a context manager.
+
+        ``policy`` overrides :attr:`policy` for this episode only, e.g. to trust one agent's
+        reports more than another's. Keyword arguments other than ``policy`` are stored as metadata.
+        """
+        return Episode(self, task, meta, policy=policy)
 
     def current_episode(self) -> Episode | None:
         """The episode active in the current thread or asyncio task, if any.

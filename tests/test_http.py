@@ -379,3 +379,18 @@ def test_idle_episodes_expire_without_new_traffic():
     assert svc.health()["open_episodes"] == 0
     svc.close_all()
     mem.close()
+
+
+def test_items_are_listed_a_page_at_a_time(api):
+    for i in range(7):
+        assert api("POST", "/v1/items", {"title": f"t{i}", "clauses": ["c"], "key": f"k{i}"})[0] == 201
+    seen, offset = [], 0
+    while offset is not None:
+        st, page = api("GET", f"/v1/items?limit=3&offset={offset}")
+        assert st == 200 and page["total"] == 7 and len(page["items"]) <= 3
+        seen += [i["key"] for i in page["items"]]
+        offset = page["next_offset"]
+    assert sorted(seen) == [f"k{i}" for i in range(7)] and len(set(seen)) == 7
+    assert api("GET", "/v1/items?limit=0")[0] == 400
+    assert api("GET", "/v1/items?limit=x")[0] == 400
+    assert api("GET", "/v1/items?offset=-1")[0] == 400

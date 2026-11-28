@@ -495,3 +495,26 @@ def test_prune_cli_reports_a_dry_run(tmp_path, capsys):
     assert '"episodes": 1' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         main(["--db", db, "prune", "--older-than", "30"])  # no unit
+
+
+# ---------------------------------------------------------------- integrations
+def test_an_episode_policy_overrides_the_memory_policy_for_that_episode_only(mem, orders):
+    item, _ = orders
+    trusting = mem.policy.with_(trusted_sources=mem.policy.trusted_sources | {rl.Source.AGENT})
+    report = rl.Signal.agent_report(False, "dates rejected", correction="Use ISO-8601 dates.")
+    with mem.episode("trusted agent", policy=trusting) as ep:
+        ep.recall("fetch orders by date")
+        assert ep.observe(ep.expect(item, "rows"), signal=report).decision.verdict is not rl.Verdict.BLOCKED
+    with mem.episode("other agent") as ep:
+        ep.recall("fetch orders by date")
+        assert ep.observe(ep.expect(item, "rows"), signal=report).decision.verdict is rl.Verdict.BLOCKED
+    assert rl.Source.AGENT not in mem.policy.trusted_sources
+
+
+def test_an_mcp_server_that_trusts_agents_leaves_the_shared_memory_policy_alone(mem):
+    pytest.importorskip("mcp")
+    from relock_memory.integrations.mcp import build_server
+
+    before = mem.policy
+    build_server(mem, trust_agent_reports=True)
+    assert mem.policy is before

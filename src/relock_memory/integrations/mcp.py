@@ -77,10 +77,13 @@ def build_server(
     name: str = "relock",
 ) -> Any:
     """Create an MCP server (``mcp`` 1.x ``FastMCP`` or 2.x ``MCPServer``) exposing relock tools."""
-    if trust_agent_reports and Source.AGENT not in memory.policy.trusted_sources:
-        memory.policy = memory.policy.with_(trusted_sources=memory.policy.trusted_sources | {Source.AGENT})
+    # Widen trust for this server's episodes only: the Memory may be shared with other code.
+    policy = memory.policy
+    if trust_agent_reports and Source.AGENT not in policy.trusted_sources:
+        policy = policy.with_(trusted_sources=policy.trusted_sources | {Source.AGENT})
     verifiers = dict(verifiers or {})
-    kit = Toolkit(memory, k=k, allow_reports=True, allow_teach=allow_teach, idle_timeout=idle_timeout)
+    kit = Toolkit(memory, k=k, allow_reports=True, allow_teach=allow_teach, idle_timeout=idle_timeout,
+                  policy=policy)
     server_cls = _load_server_class()
     server = server_cls(name, instructions=INSTRUCTIONS)
 

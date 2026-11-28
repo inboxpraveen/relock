@@ -326,7 +326,28 @@
     },
     "/v1/items": {
       "get": {
-        "summary": "List active items",
+        "summary": "List active items, ordered by id, a page at a time",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 500,
+              "minimum": 1,
+              "maximum": 5000
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -340,6 +361,16 @@
                       "items": {
                         "$ref": "#/components/schemas/Item"
                       }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "next_offset": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "null on the last page"
                     }
                   }
                 }

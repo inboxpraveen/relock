@@ -53,10 +53,11 @@ _MISSING: Any = object()
 class Episode:
     """One task attempt. Use as a context manager so it always re-locks."""
 
-    def __init__(self, memory: Memory, task: str = "", meta: dict[str, Any] | None = None) -> None:
+    def __init__(self, memory: Memory, task: str = "", meta: dict[str, Any] | None = None, *,
+                 policy: WritePolicy | None = None) -> None:
         self.memory = memory
         self.store = memory.store
-        self.policy = memory.policy
+        self.policy = policy or memory.policy  # fixed for the episode's lifetime
         self.id = new_id("ep")
         self.task = task
         self.meta = dict(meta or {})

@@ -22,6 +22,7 @@ from typing import Any
 
 from ..episode import Episode
 from ..memory import Memory
+from ..policy import WritePolicy
 from ..signals import ErrorClass, Signal
 from ..types import RelockError
 
@@ -37,12 +38,15 @@ class Toolkit:
         allow_teach: bool = False,
         task: str = "",
         idle_timeout: float | None = 1800.0,
+        policy: WritePolicy | None = None,
     ) -> None:
         """``idle_timeout``: seconds without a toolkit call after which an episode the toolkit
         opened itself is closed (re-locked) and the next call starts a fresh one. Clients that
         never call ``end`` would otherwise keep their recalled items editable indefinitely.
-        ``None`` disables it. Episodes you open yourself are never closed by the toolkit."""
+        ``None`` disables it. Episodes you open yourself are never closed by the toolkit.
+        ``policy`` applies to episodes the toolkit opens itself (default: the memory's policy)."""
         self.memory = memory
+        self.policy = policy
         self.k = k
         self.budget_tokens = budget_tokens
         self.allow_reports = allow_reports
@@ -75,7 +79,7 @@ class Toolkit:
         return own
 
     def _open_own(self, task: str) -> Episode:
-        own = self.memory.episode(task)
+        own = self.memory.episode(task, policy=self.policy)
         own._owner = self
         self._own = own
         return own

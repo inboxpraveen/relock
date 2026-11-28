@@ -149,8 +149,11 @@ class Service:
             exist_ok=_opt_bool(body, "exist_ok", False), author=_opt_str(body, "author") or "api")
         return item_json(item)
 
-    def list_items(self) -> dict[str, Any]:
-        return {"items": [item_json(i) for i in self.memory.items()]}
+    def list_items(self, limit: int = 500, offset: int = 0) -> dict[str, Any]:
+        items = self.memory._active_items()  # cached, ordered by id
+        page = items[offset:offset + limit]
+        nxt = offset + limit if offset + limit < len(items) else None
+        return {"items": [item_json(i) for i in page], "total": len(items), "next_offset": nxt}
 
     def get_item(self, ref: str, version: int | None) -> dict[str, Any]:
         return item_json(self.memory.get(ref, version))
@@ -347,7 +350,8 @@ def _routes(svc: Service) -> list[tuple[str, re.Pattern[str], Callable[..., Any]
         ("GET", r"/v1/health", lambda m, b, q: svc.health()),
         ("GET", r"/v1/openapi\.json", lambda m, b, q: openapi()),
         ("POST", r"/v1/items", lambda m, b, q: (201, svc.add_item(b))),
-        ("GET", r"/v1/items", lambda m, b, q: svc.list_items()),
+        ("GET", r"/v1/items", lambda m, b, q: svc.list_items(_int_q(q, "limit", 500, 1, 5000),
+                                                               _int_q(q, "offset", 0, 0, None))),
         ("GET", rf"/v1/items/{_REF}/history", lambda m, b, q: svc.history(unquote(m["ref"]))),
         ("GET", rf"/v1/items/{_REF}", lambda m, b, q: svc.get_item(unquote(m["ref"]), _version(q))),
         ("POST", r"/v1/episodes", lambda m, b, q: (201, svc.begin(b))),
@@ -360,6 +364,18 @@ def _routes(svc: Service) -> list[tuple[str, re.Pattern[str], Callable[..., Any]
         ("POST", rf"/v1/episodes/{_ID}/close", lambda m, b, q: svc.close(m["eid"])),
     ]
     return [(meth, re.compile(f"^{pat}$"), fn) for meth, pat, fn in r]
+
+
+def _int_q(q: dict[str, list[str]], name: str, default: int, lo: int, hi: int | None) -> int:
+    if name not in q:
+        return default
+    try:
+        value = int(q[name][0])
+    except ValueError:
+        raise ApiError(400, f"'{name}' must be an integer") from None
+    if value < lo or (hi is not None and value > hi):
+        raise ApiError(400, f"'{name}' must be between {lo} and {hi}" if hi is not None else f"'{name}' must be >= {lo}")
+    return value
 
 
 def _version(q: dict[str, list[str]]) -> int | None:
@@ -670,8 +686,13 @@ def openapi() -> dict[str, Any]:
             "/v1/openapi.json": {"get": {"summary": "This document", "security": [],
                                          "responses": ok({"type": "object"})}},
             "/v1/items": {
-                "get": {"summary": "List active items", "responses": ok(
-                    {"type": "object", "properties": {"items": {"type": "array", "items": ref("Item")}}})},
+                "get": {"summary": "List active items, ordered by id, a page at a time", "parameters": [
+                    {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 500, "minimum": 1,
+                                                                "maximum": 5000}},
+                    {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0, "minimum": 0}}],
+                    "responses": ok({"type": "object", "properties": {
+                        "items": {"type": "array", "items": ref("Item")}, "total": {"type": "integer"},
+                        "next_offset": {"type": ["integer", "null"], "description": "null on the last page"}}})},
                 "post": {"summary": "Add a procedure", "requestBody": body({
                     "type": "object", "required": ["title", "clauses"], "properties": {
                         "title": S, "clauses": strs, "key": S, "kind": S, "tags": strs,
