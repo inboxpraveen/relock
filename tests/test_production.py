@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -73,7 +74,7 @@ def test_toolkit_episode_reaches_wrapped_tools_in_the_same_context(mem, orders):
 
 
 # ---------------------------------------------------------------- storage robustness
-from tests.conftest import PG_URL  # noqa: E402
+PG_URL = os.environ.get("RELOCK_TEST_POSTGRES_URL")
 
 needs_pg = pytest.mark.skipif(not PG_URL, reason="set RELOCK_TEST_POSTGRES_URL to run Postgres tests")
 
