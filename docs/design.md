@@ -151,9 +151,9 @@ their text. Implementations:
   `<think>` blocks, code fences and chatter. It validates the delta against the same rules and
   feeds errors back for up to `max_attempts`; a reply without an `ops` list counts as invalid.
   On failure it falls back to `HintRewriter` (pass `fallback=None` for none).
+- `CallableRewriter(fn)`: any function returning ops.
 
 A rewriter sees at most the 20 most recent pending errors; a rewrite consumes all of them.
-- `CallableRewriter(fn)`: any function returning ops.
 
 ## Storage schema
 

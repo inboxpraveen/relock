@@ -29,7 +29,8 @@ unchanged.
   failure. `confirmed`, `success`, `passed`, `ok`, `failed`, `error` and similar still work.
 - `LLMRewriter(fallback=None)` now means no fallback. The default is still `HintRewriter`.
 - An invalid `WritePolicy` (a negative threshold, an unknown `rewrite_on` or source) raises
-  `ValueError`, and `recall` / `search` with `k < 1` raise `ValueError`.
+  `ValueError` when it is built. `recall` / `search` with a `k` that isn't a whole number raise
+  `TypeError`.
 - An MCP verifier run that times out or can't start is recorded as a transient `verifier`
   failure (before: a `tool` failure). Neither ever counted as evidence.
 
@@ -129,8 +130,9 @@ unchanged.
   characters.
 - `add(exist_ok=True)` warns without a `key` (it creates a new item each time) and when the item
   it finds is archived.
-- Each entry of a clause list is one line; line breaks inside it are joined. A one-line string
-  loses a leading bullet, as multi-line strings already did.
+- Each entry of a clause list is one line: line breaks and runs of spaces inside it become one
+  space. A one-line string loses a leading bullet, as multi-line strings already did.
+- Empty names in `tools` or `tags` are dropped with a warning.
 - Retrieval tokenises letters and digits in any script, so non-English items are found by their
   own words. ASCII text tokenises as before.
 

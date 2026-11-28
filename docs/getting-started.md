@@ -69,7 +69,8 @@ def get_orders(date: str) -> list[dict]:
   tool schema. It works on `async def` tools too.
 - Results come back unchanged and exceptions are re-raised unchanged.
 - **Any exception counts as a failure**, classified by type: a `ValueError` or an HTTP 422 is a
-  real error; a `TimeoutError`, an HTTP 429 or any 5xx is transient and never counts.
+  real error; a `TimeoutError`, an HTTP 429 or any 5xx is transient and never counts. Interrupts
+  and cancellation (`KeyboardInterrupt`, `asyncio.CancelledError`) are not recorded at all.
   `relock.ToolError` lets you say what the right rule is, with `correction=`. Without one, an
   [LLM rewriter](configuration.md#rewriters) can work the fix out from the error.
 

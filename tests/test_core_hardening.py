@@ -261,6 +261,38 @@ def test_langchain_handler_and_wrap_record_a_tool_once(mem, orders):
     assert len(mem.store.errors(item.id)) == 1
 
 
+def test_langchain_handler_and_wrap_record_an_async_tool_once(mem, orders):
+    pytest.importorskip("langchain_core")
+    from langchain_core.tools import StructuredTool
+
+    from relock_memory.integrations.langchain import RelockCallbackHandler
+
+    item, _ = orders
+
+    @mem.wrap
+    async def get_orders(date: str) -> list[dict]:
+        """Fetch orders for one day."""
+        if "/" in date:
+            raise rl.ToolError("invalid date", correction="Use ISO dates.")
+        return [{"id": 1}]
+
+    tool = StructuredTool.from_function(coroutine=get_orders, name="get_orders", description="Fetch orders.")
+    handler = RelockCallbackHandler(mem)
+
+    async def run(ep):
+        with ep.activate():
+            await tool.ainvoke({"date": "2026-03-14"}, config={"callbacks": [handler]})
+            with pytest.raises(rl.ToolError):
+                await tool.ainvoke({"date": "03/14/2026"}, config={"callbacks": [handler]})
+
+    with mem.episode("t") as ep:
+        ep.recall("fetch orders by date")
+        asyncio.run(run(ep))
+        summary = ep.close()
+    assert summary["expectations"] == 2
+    assert len(mem.store.errors(item.id)) == 1
+
+
 def test_langchain_handler_ignores_interrupts(mem, orders):
     pytest.importorskip("langchain_core")
     from uuid import uuid4
@@ -305,6 +337,7 @@ def test_transient_wording_in_an_error_message_never_counts(mem, orders, message
 def test_names_are_never_split_into_characters(mem):
     item = mem.add("Fetch", ["Call get_orders."], tools="get_orders", tags="orders")
     assert item.tools == ("get_orders",) and item.tags == ("orders",)
+    assert mem.add("Other", ["Do it."], tools=["a", " ", "a"]).tools == ("a",)  # blanks dropped, with a warning
     with mem.episode("t") as ep:
         assert ep.recall("fetch", tags="orders")
 
@@ -346,8 +379,9 @@ def test_recall_finds_text_in_any_script(mem):
     mem.add("Bestellungen abrufen", ["Rufe get_orders mit dem Datum im Format JJJJ-MM-TT auf."], key="de")
     with mem.episode("t") as ep:
         assert [h.item.key for h in ep.recall("Bestellungen abrufen", k=1)] == ["de"]
-    with pytest.raises(ValueError):
-        mem.search("x", k=0)
+    assert mem.search("x", k=0) == []  # as before: no hits, not an error
+    with pytest.raises(TypeError):
+        mem.search("x", k="3")
 
 
 # ---------------------------------------------------------------- the episode

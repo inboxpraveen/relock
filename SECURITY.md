@@ -23,7 +23,9 @@ not in a public issue. Include a minimal reproduction. A failing test is ideal.
 
 The [threat model](docs/design.md#threat-model) lists what relock does and does not defend against.
 Some cases are out of scope by design: an attacker who controls your tool code or verifier
-commands, and an operator who opts in to `--trust-agent-reports` or `--allow-teach`.
+commands, an operator who opts in to `--trust-agent-reports` or `--allow-teach`, and text an
+agent puts into a verifier's output (for example through tests it wrote) on an MCP server that
+runs without `--untrusted-verifier-output`.
 
 ## Supported versions
 

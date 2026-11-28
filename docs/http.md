@@ -49,6 +49,10 @@ A failed call carries an error object:
   response body. The failure still counts, but its text never reaches the rewriter.
 - **The `error` fields mean the same for every `source`.** A `verifier` failure marked
   `"transient": true` or carrying a 5xx `status` never counts either.
+- **A retry that succeeds after a corrected failure is `ignored`.** When a call failed with a
+  `correction` and a later call of the same tool in the same episode succeeds, that success is
+  not counted as a confirmation: the client most likely followed the correction, so it says
+  nothing for the stored rule, and the failure stays as evidence.
 
 Items are attributed to a tool through the `tools` list given when the item is added
 (`POST /v1/items`). To attribute an outcome to specific items instead, pass `"items": [...]`.

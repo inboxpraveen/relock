@@ -65,9 +65,10 @@ def _names(value: str | Iterable[str] | None, what: str) -> tuple[str, ...]:
         return ()
     if isinstance(value, str):
         value = [value]
-    names = tuple(dict.fromkeys(str(v).strip() for v in value))
-    if any(not n for n in names):
-        raise ValueError(f"{what} must be non-empty names, got {list(value)!r}")
+    given = [str(v).strip() for v in value]
+    names = tuple(dict.fromkeys(n for n in given if n))
+    if "" in given:
+        log.warning("relock: ignoring empty names in %s=%r", what, list(value))
     return names
 
 
@@ -245,8 +246,10 @@ class Memory:
                      tags: Sequence[str] | None = None) -> list[Hit]:
         if not isinstance(query, str):
             raise TypeError(f"query must be a string, not {type(query).__name__}")
-        if isinstance(k, bool) or not isinstance(k, int) or k < 1:
-            raise ValueError(f"k must be a whole number of at least 1, not {k!r}")
+        if isinstance(k, bool) or not isinstance(k, int):
+            raise TypeError(f"k must be a whole number, not {k!r}")
+        if k < 1:
+            return []
         items = self._active_items()
         candidates = None
         if kinds or tags:
