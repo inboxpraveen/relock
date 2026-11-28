@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 356" width="880" height="356" role="img" aria-labelledby="title desc">
+<title id="title">The trust gate</title>
+<desc id="desc">Every outcome passes the trust gate. Typed tool errors, verifiers such as tests and schema checks, and users your application has verified count as evidence. Evidence is weighted, a later success cancels a one-off flake, and at the threshold the clause that fired is rewritten in place. Timeouts, rate limits and server errors, the model's own reports, self-critique and retrieved text such as web pages are written to the event log with the reason, and never change memory.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+  <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-muted" d="M0 0 10 5 0 10z"/></marker>
+</defs>
+<style>
+:root{--surface:#ffffff;--panel:#f7f8fa;--line:#e2e4e8;--ink:#191919;--ink2:#666666;--muted:#9a9a9a;--accent:#257de0;--accent-tint:rgba(37,125,224,.08)}
+@media (prefers-color-scheme: dark){:root{--surface:#191919;--panel:#202124;--line:#36383d;--ink:#efefef;--ink2:#9c9c9c;--muted:#6f6f6f;--accent:#338ced;--accent-tint:rgba(51,140,237,.15)}}
+text{font-family:ui-sans-serif,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+.bg{fill:var(--surface)} .node{fill:var(--panel);stroke:var(--line)} .key{fill:var(--accent-tint);stroke:var(--accent)}
+.off{fill:none;stroke:var(--muted);stroke-dasharray:4 4}
+.title{fill:var(--ink);font-size:17px;font-weight:650} .sub{fill:var(--ink2);font-size:12.5px}
+.lab{fill:var(--ink2);font-size:10px;font-weight:650;letter-spacing:.09em} .laba{fill:var(--accent);font-size:10px;font-weight:700;letter-spacing:.09em}
+.nt{fill:var(--ink);font-size:13.5px;font-weight:650} .nta{fill:var(--accent);font-size:14px;font-weight:700}
+.ns{fill:var(--ink2);font-size:11.5px} .mt{fill:var(--ink2);font-size:12px} .el{fill:var(--ink2);font-size:11.5px}
+.head{fill:var(--accent)} .head-muted{fill:var(--muted)}
+.flow{fill:none;stroke:var(--accent);stroke-width:1.8;stroke-dasharray:5 5;animation:flow 1.2s linear infinite}
+.wire{fill:none;stroke:var(--accent);stroke-width:1.8}
+.branch{fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:3 4}
+@keyframes flow{to{stroke-dashoffset:-10}}
+@media (prefers-reduced-motion: reduce){.flow{animation:none}}
+</style>
+
+<rect class="bg" x="0" y="0" width="880" height="356" rx="10"/>
+<text class="title" x="24" y="34">The trust gate</text>
+<text class="sub" x="24" y="56">The model predicts, the harness judges: only real outcomes can change memory.</text>
+
+<!-- trusted sources -->
+<text class="laba" x="24" y="90">COUNTS AS EVIDENCE</text>
+<rect class="node" x="24.5" y="100.5" width="270" height="38" rx="8"/>
+<text class="nt" x="40" y="124">Tool error</text>
+<text class="ns" x="146" y="124">typed error, HTTP 4xx</text>
+<rect class="node" x="24.5" y="146.5" width="270" height="38" rx="8"/>
+<text class="nt" x="40" y="170">Verifier</text>
+<text class="ns" x="146" y="170">tests, schema check, grader</text>
+<rect class="node" x="24.5" y="192.5" width="270" height="38" rx="8"/>
+<text class="nt" x="40" y="216">Verified user</text>
+<text class="ns" x="146" y="216">authenticated by your app</text>
+
+<!-- untrusted or transient sources -->
+<text class="lab" x="24" y="262">LOGGED, NEVER APPLIED</text>
+<rect class="off" x="24.5" y="272.5" width="131" height="28" rx="14"/>
+<text class="mt" x="90" y="291" text-anchor="middle">timeouts, 429, 5xx</text>
+<rect class="off" x="163.5" y="272.5" width="131" height="28" rx="14"/>
+<text class="mt" x="229" y="291" text-anchor="middle">model's own report</text>
+<rect class="off" x="24.5" y="308.5" width="131" height="28" rx="14"/>
+<text class="mt" x="90" y="327" text-anchor="middle">self-critique, judge</text>
+<rect class="off" x="163.5" y="308.5" width="131" height="28" rx="14"/>
+<text class="mt" x="229" y="327" text-anchor="middle">web pages, docs</text>
+
+<!-- trusted bus into the gate -->
+<path class="wire" d="M296 120H332M296 166H332M296 212H332M332 120V212"/>
+<path class="flow" d="M332 166H369" marker-end="url(#arrow)"/>
+
+<!-- untrusted path into the gate -->
+<path class="branch" d="M296 304H412V231" marker-end="url(#arrow-muted)"/>
+
+<!-- the gate -->
+<rect class="key" x="372.5" y="126.5" width="150" height="80" rx="10"/>
+<text class="nta" x="447" y="160" text-anchor="middle">Trust gate</text>
+<text class="ns" x="447" y="180" text-anchor="middle">source, error class,</text>
+<text class="ns" x="447" y="195" text-anchor="middle">weight</text>
+
+<!-- trusted: evidence, then rewrite -->
+<path class="flow" d="M524 150H556V125H587" marker-end="url(#arrow)"/>
+<rect class="node" x="590.5" y="96.5" width="265" height="59" rx="10"/>
+<text class="nt" x="608" y="121">Evidence</text>
+<text class="ns" x="608" y="141">weighted; a later success cancels a flake</text>
+<path class="flow" d="M723 157V184" marker-end="url(#arrow)"/>
+<text class="el" x="733" y="175">at the threshold</text>
+<rect class="key" x="590.5" y="187.5" width="265" height="59" rx="10"/>
+<text class="nta" x="608" y="212">Rewrite in place</text>
+<text class="ns" x="608" y="232">only the clause that fired; old version kept</text>
+
+<!-- blocked: logged -->
+<path class="branch" d="M482 208V304H587" marker-end="url(#arrow-muted)"/>
+<text class="el" x="492" y="296">blocked</text>
+<rect class="node" x="590.5" y="276.5" width="265" height="56" rx="10"/>
+<text class="nt" x="608" y="300">Event log</text>
+<text class="ns" x="608" y="319">stored with the reason it was blocked</text>
+</svg>

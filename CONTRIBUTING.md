@@ -37,6 +37,19 @@ that weakens one of these needs a very good reason and a test:
 
 The [design doc](docs/design.md) has the full lifecycle and threat model.
 
+## Documentation
+
+The root `README.md` is the front page, on GitHub and on PyPI: what relock is, the results,
+install, a quickstart and links. Everything else lives in [`docs/`](docs/README.md), one topic per
+page. Each fact should live on one page, with other pages linking to it.
+
+- PyPI renders the same README, with relative links rewritten to GitHub (see `pyproject.toml`).
+  Avoid GitHub-only syntax there, such as Mermaid or `> [!NOTE]` alerts.
+- Keep existing file paths and headings under `docs/` stable. Released READMEs on PyPI link to
+  them.
+- Diagrams in `docs/assets/` are hand-written SVG with light and dark palettes. Check both themes
+  before committing.
+
 ## Benchmark changes
 
 The structural RelapseBench mode is deterministic. If you change retrieval, the bench systems or

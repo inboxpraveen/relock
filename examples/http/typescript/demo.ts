@@ -1,6 +1,6 @@
 // The orders API moved from MM/DD/YYYY to ISO dates. Watch relock fix the rule in place.
 //   relock serve &            (or: docker run -p 8765:8765 -e RELOCK_TOKEN=... ghcr.io/inboxpraveen/relock)
-//   node demo.ts              (Node 22.6+ runs TypeScript directly)
+//   node demo.ts              (Node 22.18+ runs TypeScript directly)
 import { Relock } from "./relock.ts";
 
 const relock = new Relock(process.env.RELOCK_URL ?? "http://127.0.0.1:8765");

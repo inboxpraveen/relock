@@ -21,7 +21,7 @@ not in a public issue. Include a minimal reproduction. A failing test is ideal.
 - Two active versions of one item, lost updates under concurrency, or history being destroyed.
 - The MCP server running anything other than the verifier commands its operator configured.
 
-The [threat model](docs/design.md#threat-model) lists what v0.1 does and does not defend against.
+The [threat model](docs/design.md#threat-model) lists what relock does and does not defend against.
 Some cases are out of scope by design: an attacker who controls your tool code or verifier
 commands, and an operator who opts in to `--trust-agent-reports` or `--allow-teach`.
 

@@ -66,9 +66,13 @@ Items are attributed to a tool through the `tools` list given when the item is a
 Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these statuses:
 - `400`: bad input;
 - `401`: missing or wrong token;
-- `404`: unknown item, or an episode that is closed or expired;
+- `404`: unknown item or route, or an episode that is closed or expired;
+- `405`: the route exists but not for this method;
 - `409`: the item was not recalled in this episode, or the episode is closed;
-- `413`: body over 1 MiB.
+- `413`: body over 1 MiB;
+- `429`: too many open episodes; close some first;
+- `500`: an unexpected server error;
+- `501`: an unsupported `Transfer-Encoding`.
 
 ## Trust
 
@@ -76,7 +80,7 @@ Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these stat
   that is sent: `tool` and `verifier` outcomes can rewrite memory; `agent` and `environment`
   outcomes are logged but never rewrite it.
 - **Never let the model call it directly.** For a model that should use memory by itself, run
-  the [MCP server](../README.md#mcp) instead. There, nothing the agent writes is trusted.
+  the [MCP server](mcp.md) instead. There, nothing the agent writes is trusted.
 - **Token:** set `RELOCK_TOKEN` to require `Authorization: Bearer <token>`. Without a token the
   server only binds to loopback; `relock serve --host 0.0.0.0` refuses to start.
 - **Idle episodes are re-locked** after 30 minutes (`--idle-timeout`) by a background sweeper. A
@@ -98,7 +102,7 @@ Errors are JSON, `{"error": {"code": "...", "message": "..."}}`, with these stat
   framings is refused.
 - **Shutdown:** on `SIGTERM` (for example `docker stop`) the server re-locks every open episode
   and closes the database before exiting.
-- **Logs:** the server logs requests and every ledger event at INFO to stderr: rewrites,
+- **Logs:** the server logs every ledger event at INFO to stderr (requests at DEBUG): rewrites,
   prediction errors, blocked or declined writes and conflicts, each with episode and item ids.
   Set `RELOCK_LOG_LEVEL=DEBUG` to include event payloads, or `WARNING` to keep only problems.
 - **Retention:** the ledger grows with every tool call. Run `relock prune --older-than 30d`

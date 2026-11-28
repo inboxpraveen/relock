@@ -1,7 +1,7 @@
 # relock design
 
 This document specifies the mechanism precisely: data model, lifecycle, gates, storage and
-threat model. The README covers the why.
+threat model. [How relock works](concepts.md) covers the why.
 
 ## Data model
 
@@ -89,11 +89,13 @@ inertia with fake "it worked" reports and make a poisoned procedure harder to fi
    - 408, 425, 429 and 5xx -> transient;
    - 400, 401, 403, 404, 409, 422 and similar -> programmatic.
 3. Built-in exception types:
-   - `TimeoutError` and `ConnectionError` -> transient;
+   - `TimeoutError`, `ConnectionError` and `InterruptedError` -> transient;
    - `AssertionError` -> semantic;
-   - `ValueError`, `TypeError`, `LookupError` -> programmatic.
+   - `ValueError`, `TypeError`, `LookupError`, `AttributeError`, `NotImplementedError` -> programmatic.
 4. Class-name hints across the MRO (`ReadTimeout`, `RateLimitError`, `ValidationError`, ...).
-5. Anything else -> unknown (weight 0.5).
+5. Any other `OSError` (network and file-system errors) -> transient. This errs towards never
+   learning from an environment problem.
+6. Anything else -> unknown (weight 0.5).
 
 ## Attribution of tool outcomes
 
@@ -173,16 +175,20 @@ WHERE v.change_kind = 'reconsolidate' AND v.created_at > now() - interval '7 day
 | Concurrent episodes overwrite each other | Compare-and-swap on `current_version`; stale evidence becomes `CONFLICT`, recorded as a `conflict` event. |
 | One agent's tool outcome rewrites another agent's memory | Outcomes go only to the episode in the caller's context; there is no process-wide fallback. `Toolkit` instances keep separate episodes, and `policy=` sets trust per episode. |
 | A bad rewrite slips through | Full version history; `rollback` restores any version as a new version; every decision is in `relock_events`. |
-| Late edits after the context is gone | Closed episodes raise `EpisodeClosedError` on any write. Episodes the toolkit or MCP server opened themselves are re-locked after `idle_timeout` seconds (default 1800) without a call, so a client that never ends its task does not keep items editable. |
+| Late edits after the context is gone | Closed episodes raise `EpisodeClosedError` on any write. Episodes the toolkit or MCP server opened themselves are re-locked once they have been idle for `idle_timeout` seconds (default 1800): the next call closes them first, so a client that never ends its task does not keep items editable. |
 | "The user said so" | `Signal.user` and `Episode.correct` default to `authenticated=False` and are blocked; the application must vouch for the user explicitly. |
 | Someone on the network rewrites memory through the HTTP API | `relock serve` trusts the `source` its caller declares, so callers must be your harness. Without `RELOCK_TOKEN` it binds only to loopback and refuses a public address. With a token, every route except health and the OpenAPI document needs `Authorization: Bearer`, and the token check runs in constant time. JSON types are strict, so `"authenticated": "false"` is rejected rather than read as true. Bodies are capped at 1 MiB, and a request carrying both framings is refused. Connections and open episodes are capped, stalled connections time out, and idle episodes are re-locked in the background. |
 | A write races the episode's close | `observe`, `expect`, `recall` and `use` re-check that the episode is open under the lock `close()` takes. A close that lands mid-request wins, and the write fails with `EpisodeClosedError` instead of committing after re-lock. `tool_result` binds and resolves under that lock, so concurrent reports never collide. |
 
-Not mitigated in v0.1:
+Not mitigated:
 
 - An attacker who controls your tool code or verifier commands.
 - An authenticated user who gives wrong corrections. Their corrections are authoritative by
   design; use `authoritative_users=False` to put them through the evidence threshold.
+- Agent-influenced text in verifier output. The MCP server passes a verifier's output to the
+  rewriter so that an LLM rewriter can work out the fix. An agent that can edit what the verifier
+  runs, such as the tests in a coding task, can put text into that output. The pass/fail verdict
+  stays trusted; review rewrites made from verifier evidence.
 - Retrieval-time injection through item *content* written by an agent. Teaching is off by
   default in both the toolkit (`allow_teach`) and the MCP server (`--allow-teach`). When it is on,
   agent-created items carry `meta.origin = "agent"` and author `agent`, and can be reviewed or
