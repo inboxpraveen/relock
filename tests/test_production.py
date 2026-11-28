@@ -232,7 +232,8 @@ def test_a_long_episode_keeps_only_open_expectations_in_memory(mem, orders):
         ep.recall("fetch orders by date")
         for _ in range(300):
             get_orders("2026-03-14")
-        assert len(ep._expectations) == 0
+        assert len(ep._expectations) == 0 and not ep._explicit  # nothing grows per call
+        assert not any(isinstance(v, (set, list, dict)) and len(v) > 5 for v in vars(ep).values())
     assert ep.summary["expectations"] == 300
 
 
@@ -518,3 +519,24 @@ def test_an_mcp_server_that_trusts_agents_leaves_the_shared_memory_policy_alone(
     before = mem.policy
     build_server(mem, trust_agent_reports=True)
     assert mem.policy is before
+
+
+def test_a_missing_row_is_a_store_error_not_a_conflict(mem, orders):
+    ep = mem.episode("deleted under us")  # e.g. pruned by a replica that thought it was abandoned
+    with mem.store._tx() as cur:
+        mem.store._exec(cur, "DELETE FROM relock_episodes WHERE id = ?", (ep.id,))
+    with pytest.raises(rl.StoreError) as raised:
+        ep.recall("fetch orders by date")
+    assert not isinstance(raised.value, rl.ConflictError)
+
+
+def test_observing_an_expectation_twice_is_refused(mem, orders):
+    item, _ = orders
+    with mem.episode("t") as ep:
+        ep.recall("fetch orders by date")
+        exp = ep.expect(item, "rows")
+        ep.observe(exp, [{"id": 1}])
+        with pytest.raises(rl.RelockError, match="already observed"):
+            ep.observe(exp, [{"id": 1}])
+        with pytest.raises(rl.NotFoundError):
+            ep.observe("exp_does_not_exist", [])

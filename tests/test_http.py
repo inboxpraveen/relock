@@ -384,13 +384,15 @@ def test_idle_episodes_expire_without_new_traffic():
 def test_items_are_listed_a_page_at_a_time(api):
     for i in range(7):
         assert api("POST", "/v1/items", {"title": f"t{i}", "clauses": ["c"], "key": f"k{i}"})[0] == 201
-    seen, offset = [], 0
-    while offset is not None:
-        st, page = api("GET", f"/v1/items?limit=3&offset={offset}")
-        assert st == 200 and page["total"] == 7 and len(page["items"]) <= 3
+    st, first = api("GET", "/v1/items?limit=3")
+    assert st == 200 and first["total"] == 7 and len(first["items"]) == 3
+    api.svc.memory.archive(first["items"][0]["id"])  # changes between pages skip nothing
+    seen, after = [i["key"] for i in first["items"]], first["next_after"]
+    while after is not None:
+        st, page = api("GET", f"/v1/items?limit=3&after={after}")
+        assert st == 200 and len(page["items"]) <= 3
         seen += [i["key"] for i in page["items"]]
-        offset = page["next_offset"]
+        after = page["next_after"]
     assert sorted(seen) == [f"k{i}" for i in range(7)] and len(set(seen)) == 7
     assert api("GET", "/v1/items?limit=0")[0] == 400
     assert api("GET", "/v1/items?limit=x")[0] == 400
-    assert api("GET", "/v1/items?offset=-1")[0] == 400

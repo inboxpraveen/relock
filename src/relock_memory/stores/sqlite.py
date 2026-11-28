@@ -55,6 +55,10 @@ class SQLiteStore(SQLStore):
                     raise
                 time.sleep(0.02)
 
+    def _is_conflict(self, exc: BaseException) -> bool:
+        # sqlite3 raises IntegrityError for every constraint; only unique keys mean a lost race.
+        return "UNIQUE constraint failed" in str(exc)
+
     def _begin(self, cur: Any, write: bool) -> None:
         # Writes take the write lock up front, so two writers never deadlock upgrading a read
         # lock. Reads stay deferred, so they don't queue behind writers in other processes.

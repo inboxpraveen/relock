@@ -175,7 +175,8 @@ class SQLStore:
     driver_errors: tuple[type[BaseException], ...] = ()
     """The driver's exceptions; they are re-raised as :class:`StoreError` (cause chained)."""
     integrity_errors: tuple[type[BaseException], ...] = ()
-    """Constraint violations; re-raised as :class:`ConflictError` (a concurrent writer won)."""
+    """Unique-key violations; re-raised as :class:`ConflictError` (a concurrent writer won).
+    Other constraint failures (a missing referenced row, say) are a :class:`StoreError`."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -225,7 +226,7 @@ class SQLStore:
 
     def _translate(self, exc: Exception, broken: bool) -> None:
         """Re-raise a driver exception as a relock error; return to re-raise it unchanged."""
-        if isinstance(exc, self.integrity_errors):
+        if isinstance(exc, self.integrity_errors) and self._is_conflict(exc):
             raise ConflictError(f"{self!r}: a concurrent write won: {type(exc).__name__}: {exc}") from exc
         if isinstance(exc, self.driver_errors):
             if broken:
@@ -235,6 +236,10 @@ class SQLStore:
                                  "The connection was discarded and the next call reconnects. A write that "
                                  "failed while committing may or may not have been applied.") from exc
             raise StoreError(f"{self!r}: {type(exc).__name__}: {exc}") from exc
+
+    def _is_conflict(self, exc: BaseException) -> bool:
+        """Whether an integrity error is a unique-key clash (dialect hook)."""
+        return True
 
     def _sql(self, sql: str) -> str:
         return sql if self.placeholder == "?" else sql.replace("?", self.placeholder)

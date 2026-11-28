@@ -405,7 +405,9 @@ class Memory:
         * Older episodes that must stay lose only per-call detail nothing cites: confirmed
           expectations and their ``expect`` / ``confirm`` events.
         * An episode still open but idle since the cutoff (its process died) is marked
-          ``abandoned`` first. Episodes open in this process are never touched.
+          ``abandoned`` first. Episodes open in this process are never touched; other processes
+          can't be checked, so ``older_than`` must exceed the longest an episode stays open and
+          idle in any replica (a pruned live episode fails its next write with StoreError).
 
         Deletes run in small batches, one transaction each. Returns counts per table; with
         ``dry_run=True`` nothing changes and the counts say what would go. SQLite keeps the

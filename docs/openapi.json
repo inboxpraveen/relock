@@ -339,13 +339,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "after",
             "in": "query",
             "schema": {
-              "type": "integer",
-              "default": 0,
-              "minimum": 0
-            }
+              "type": "string"
+            },
+            "description": "Return items after this item id: pass the previous page's next_after."
           }
         ],
         "responses": {
@@ -365,9 +364,9 @@
                     "total": {
                       "type": "integer"
                     },
-                    "next_offset": {
+                    "next_after": {
                       "type": [
-                        "integer",
+                        "string",
                         "null"
                       ],
                       "description": "null on the last page"

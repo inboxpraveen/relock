@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from typing import Any
@@ -227,6 +228,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="relock", description="Agent memory that unlocks on recall, rewrites on "
                                                            "surprise, and re-locks.")
     p.add_argument("--version", action="version", version=f"relock {__version__}")
+    p.add_argument("--log-level", default=os.environ.get("RELOCK_LOG_LEVEL"),
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR"], type=str.upper,
+                   help="log relock events to stderr at this level (default: $RELOCK_LOG_LEVEL; "
+                        "'serve' logs INFO when unset)")
     p.add_argument("--db", default=os.environ.get("RELOCK_DB", "relock.db"),
                    help="SQLite path or postgresql:// URL (default: $RELOCK_DB or ./relock.db)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -290,7 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
 
     sp = add("prune", cmd_prune, "Delete old audit detail (items and versions are always kept).")
-    sp.add_argument("--older-than", required=True, metavar="AGE", type=_age_arg, help="e.g. 30d, 12h, 2w")
+    sp.add_argument("--older-than", required=True, metavar="AGE", type=_age_arg,
+                    help="e.g. 30d, 12h, 2w; must exceed the longest an episode stays open in any process")
     sp.add_argument("--dry-run", action="store_true", help="only count what would be deleted")
     sp.add_argument("--json", action="store_true")
 
@@ -349,11 +355,18 @@ def main(argv: list[str] | None = None) -> int:
         return bench_main(rest)
     if rest:
         parser.error(f"unrecognized arguments: {' '.join(rest)}")
+    if args.log_level:  # stderr only: stdout carries command output and the MCP stdio protocol
+        logging.basicConfig(level=args.log_level, stream=sys.stderr,
+                            format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if getattr(args, "mcp", False):
         return cmd_mcp(args)
     if getattr(args, "serve", False):
         return cmd_serve(args)
-    mem = Memory(args.db)
+    try:
+        mem = Memory(args.db)
+    except RelockError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     try:
         return int(args.fn(args, mem) or 0)
     except (RelockError, KeyError, ValueError) as e:

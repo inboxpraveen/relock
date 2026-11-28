@@ -66,7 +66,6 @@ class Episode:
         self._labile: dict[str, Item] = {}
         self._expectations: dict[str, Expectation] = {}  # open ones only; resolved ones are dropped
         self._explicit: dict[tuple[str, str], list[str]] = {}  # (item id, tool) -> open explicit expectation ids
-        self._resolved: set[str] = set()
         self._n_expectations = 0
         self._rewrites: Counter[str] = Counter()
         self._declined: dict[str, tuple[str, ...]] = {}
@@ -263,12 +262,13 @@ class Episode:
             # above and here must win, or a rewrite could commit after the episode re-locked.
             self._ensure_open()
             exp = self._expectation(expectation)
-            self._resolved.add(exp.id)
             self._expectations.pop(exp.id, None)
             if exp.tool and not exp.auto:
                 open_ids = self._explicit.get((exp.item_id, exp.tool), [])
                 if exp.id in open_ids:
                     open_ids.remove(exp.id)
+                if not open_ids:
+                    self._explicit.pop((exp.item_id, exp.tool), None)
 
             exc = error if isinstance(error, BaseException) else None
             # A failure the caller states explicitly is never overridden by the expectation's
@@ -306,10 +306,14 @@ class Episode:
 
     def _expectation(self, expectation: Expectation | str) -> Expectation:
         exp_id = expectation.id if isinstance(expectation, Expectation) else expectation
-        if exp_id in self._resolved:
-            raise RelockError(f"expectation {exp_id} was already observed")
-        exp = self._expectations.get(exp_id)
+        exp = self._expectations.get(exp_id)  # open expectations only
         if exp is None:
+            try:
+                stored = self.store.get_expectation(exp_id)
+            except NotFoundError:
+                stored = None
+            if stored is not None and stored["episode_id"] == self.id:
+                raise RelockError(f"expectation {exp_id} was already observed")
             raise NotFoundError(f"expectation {exp_id!r} does not belong to episode {self.id}")
         return exp
 

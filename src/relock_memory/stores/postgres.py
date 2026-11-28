@@ -44,7 +44,7 @@ class PostgresStore(SQLStore):
         if pool_size < 1:
             raise ValueError("pool_size must be at least 1")
         self.driver_errors = (psycopg.Error,)
-        self.integrity_errors = (psycopg.IntegrityError,)
+        self.integrity_errors = (psycopg.errors.UniqueViolation,)
         self.dsn = dsn
         self.pool_size = pool_size
         self.pool_timeout = pool_timeout

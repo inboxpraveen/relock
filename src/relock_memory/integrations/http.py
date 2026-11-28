@@ -17,6 +17,7 @@ without a token.
 
 from __future__ import annotations
 
+import bisect
 import hmac
 import ipaddress
 import json
@@ -149,11 +150,17 @@ class Service:
             exist_ok=_opt_bool(body, "exist_ok", False), author=_opt_str(body, "author") or "api")
         return item_json(item)
 
-    def list_items(self, limit: int = 500, offset: int = 0) -> dict[str, Any]:
+    def list_items(self, limit: int = 500, after: str | None = None) -> dict[str, Any]:
+        """A page of active items ordered by id, starting after the item id ``after``.
+
+        A cursor rather than an offset: archiving or adding items between pages never skips
+        or repeats one that stays active."""
         items = self.memory._active_items()  # cached, ordered by id
-        page = items[offset:offset + limit]
-        nxt = offset + limit if offset + limit < len(items) else None
-        return {"items": [item_json(i) for i in page], "total": len(items), "next_offset": nxt}
+        start = bisect.bisect_right(items, after, key=lambda i: i.id) if after else 0
+        page = items[start:start + limit]
+        more = start + limit < len(items)
+        return {"items": [item_json(i) for i in page], "total": len(items),
+                "next_after": page[-1].id if more and page else None}
 
     def get_item(self, ref: str, version: int | None) -> dict[str, Any]:
         return item_json(self.memory.get(ref, version))
@@ -351,7 +358,7 @@ def _routes(svc: Service) -> list[tuple[str, re.Pattern[str], Callable[..., Any]
         ("GET", r"/v1/openapi\.json", lambda m, b, q: openapi()),
         ("POST", r"/v1/items", lambda m, b, q: (201, svc.add_item(b))),
         ("GET", r"/v1/items", lambda m, b, q: svc.list_items(_int_q(q, "limit", 500, 1, 5000),
-                                                               _int_q(q, "offset", 0, 0, None))),
+                                                               (q.get("after") or [None])[0])),
         ("GET", rf"/v1/items/{_REF}/history", lambda m, b, q: svc.history(unquote(m["ref"]))),
         ("GET", rf"/v1/items/{_REF}", lambda m, b, q: svc.get_item(unquote(m["ref"]), _version(q))),
         ("POST", r"/v1/episodes", lambda m, b, q: (201, svc.begin(b))),
@@ -689,10 +696,11 @@ def openapi() -> dict[str, Any]:
                 "get": {"summary": "List active items, ordered by id, a page at a time", "parameters": [
                     {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 500, "minimum": 1,
                                                                 "maximum": 5000}},
-                    {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0, "minimum": 0}}],
+                    {"name": "after", "in": "query", "schema": S,
+                     "description": "Return items after this item id: pass the previous page's next_after."}],
                     "responses": ok({"type": "object", "properties": {
                         "items": {"type": "array", "items": ref("Item")}, "total": {"type": "integer"},
-                        "next_offset": {"type": ["integer", "null"], "description": "null on the last page"}}})},
+                        "next_after": {"type": ["string", "null"], "description": "null on the last page"}}})},
                 "post": {"summary": "Add a procedure", "requestBody": body({
                     "type": "object", "required": ["title", "clauses"], "properties": {
                         "title": S, "clauses": strs, "key": S, "kind": S, "tags": strs,
